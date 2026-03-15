@@ -1,0 +1,182 @@
+% analysis_usage_examples.m
+% =============================================================
+% Unified usage guide for run_analysis(taskType, ...)
+% =============================================================
+%
+% taskType = 'chunk' | 'cluster' | 'vx'
+%
+% -------------------------------------------------------------
+% Common parameters (all task types)
+% -------------------------------------------------------------
+% 'BaseDir'          : case directory (default: pwd)
+% 'SelectBy'         : 'Index' | 'TimeStep' | 'Time'
+% 'Index'            : block index when SelectBy='Index'
+% 'TimeStep'         : timestep when SelectBy='TimeStep'
+% 'Time'             : physical time when SelectBy='Time'
+% 'SlurmPath'        : slurm file path (optional; auto from BaseDir for Time mode)
+% 'SlurmModuleIndex' : module index in slurm Step/CPU blocks (default: 1)
+%
+% -------------------------------------------------------------
+% Extra parameters for taskType='chunk'
+% -------------------------------------------------------------
+% 'ChunkDim'         : '1d' or '2d'
+% 'ChunkFile'        : optional explicit file path/name
+% 'Variable'         :
+%   - raw variable from chunk columns (e.g. c_rho)
+%   - or derived variable: T,Sxx,Syy,Szz,Sxy,Sxz,Syz,vonMisesS
+% 'dV'               : required for stress-related derived vars
+% 'DoPlot'           : true/false (default true)
+% 'PlotOptions'      : cell, forwarded to plot_line1d/plot_cloud2d
+%
+% -------------------------------------------------------------
+% Extra parameters for taskType='cluster'
+% -------------------------------------------------------------
+% 'ClusterFile'      : optional explicit file path/name
+% 'ClusterOptions'   : cell, forwarded to cluster_postprocess
+%
+% -------------------------------------------------------------
+% Extra parameters for taskType='vx'
+% -------------------------------------------------------------
+% 'VxFile'           : optional explicit file path/name
+% 'VxOptions'        : cell, forwarded to vx_chunk_cumulative
+%
+% =============================================================
+% Quick setup
+% =============================================================
+baseDir = './vshock_0.1';
+chunkDim = '2d';
+dVMode = 'auto';   % 'auto' | 'manual'
+manualDV = 4.05 * 16.1443894417461 * 4.05;
+
+runChunkRaw = true;
+runChunkDerived = false;
+runCluster = true;
+runVx = true;
+
+% =============================================================
+% 1) Chunk analysis examples
+% =============================================================
+if runChunkRaw
+    % Example A: raw variable on 2D chunk, selected by Time
+    out_chunk_raw = run_analysis('chunk', ...
+        'BaseDir', baseDir, ...
+        'ChunkDim', chunkDim, ...
+        'Variable', 'c_rho', ...
+        'SelectBy', 'Time', ...
+        'Time', 500, ...
+        'DoPlot', true, ...
+        'PlotOptions', {'NaNMode', 'transparent', 'SmoothLevel', 0});
+end
+
+if runChunkDerived
+    % Derived variable example:
+    % - T does not need dV physically, but stress variables do.
+    % - Here we prepare dV anyway for switching to Sxx/vonMisesS quickly.
+    if strcmpi(dVMode, 'auto')
+        dV = infer_dV_from_bin_filename(baseDir, chunkDim);
+    else
+        dV = manualDV;
+    end
+
+    out_chunk_derived = run_analysis('chunk', ...
+        'BaseDir', baseDir, ...
+        'ChunkDim', chunkDim, ...
+        'Variable', 'vonMisesS', ...   % change to T/Sxx/Syy/Szz/Sxy/Sxz/Syz as needed
+        'SelectBy', 'TimeStep', ...
+        'TimeStep', 2000, ...
+        'dV', dV, ...
+        'DoPlot', true, ...
+        'PlotOptions', {'NaNMode', 'white', 'SmoothLevel', 1.0});
+end
+
+% =============================================================
+% 2) Cluster analysis example
+% =============================================================
+if runCluster
+    out_cluster = run_analysis('cluster', ...
+        'BaseDir', baseDir, ...
+        'SelectBy', 'Index', ...
+        'Index', 3, ...
+        'ClusterOptions', {'Dim', 2, 'Dx', 0.025, 'MakePlots', true});
+end
+
+% =============================================================
+% 3) Cumulative areal density (vx_chunk) example
+% =============================================================
+if runVx
+    out_vx = run_analysis('vx', ...
+        'BaseDir', baseDir, ...
+        'SelectBy', 'Time', ...
+        'Time', 500, ...
+        'VxOptions', {'VelocityFactor', 0.001, 'MakePlot', true});
+end
+
+% =============================================================
+% Helper: auto dV from bin filename metadata
+% =============================================================
+function dV = infer_dV_from_bin_filename(baseDir, chunkDim)
+% Auto infer dV from bin filename metadata:
+% use any 3 recognized keys among dx/dy/dz/Lx/Ly/Lz.
+
+    dimTag = lower(strtrim(chunkDim));
+    if strcmp(dimTag, '1d')
+        pattern = 'bin1d*.txt';
+    elseif strcmp(dimTag, '2d')
+        pattern = 'bin2d*.txt';
+    else
+        error('analysis_usage_examples:BadChunkDim', 'chunkDim must be ''1d'' or ''2d''.');
+    end
+
+    files = dir(fullfile(baseDir, pattern));
+    files = files(~[files.isdir]);
+    if isempty(files)
+        error('analysis_usage_examples:NoBinFile', ...
+            'No file matches %s in %s', pattern, baseDir);
+    end
+    if numel(files) > 1
+        names = {files.name};
+        error('analysis_usage_examples:MultipleBinFiles', ...
+            'Multiple files match %s in %s: %s', pattern, baseDir, strjoin(names, ', '));
+    end
+
+    fname = files(1).name;
+    base = regexprep(fname, '\.txt$', '');
+    parts = strsplit(base, '_');
+
+    % skip prefix token (bin1d/bin2d), then parse key-value pairs
+    if numel(parts) < 3
+        error('analysis_usage_examples:BadBinName', ...
+            'Filename has no key-value metadata: %s', fname);
+    end
+    kv = parts(2:end);
+    if mod(numel(kv), 2) ~= 0
+        error('analysis_usage_examples:BadBinName', ...
+            'Filename key-value pairs are invalid: %s', fname);
+    end
+
+    meta = struct();
+    for i = 1:2:numel(kv)
+        k = matlab.lang.makeValidName(kv{i});
+        v = str2double(kv{i+1});
+        if ~isnan(v)
+            meta.(k) = v;
+        end
+    end
+
+    keyOrder = {'dx','dy','dz','Lx','Ly','Lz'};
+    vals = [];
+    for i = 1:numel(keyOrder)
+        k = keyOrder{i};
+        if isfield(meta, k)
+            vals(end+1) = meta.(k); %#ok<AGROW>
+        end
+    end
+
+    if numel(vals) < 3
+        error('analysis_usage_examples:NotEnoughVars', ...
+            'Need at least 3 vars among dx/dy/dz/Lx/Ly/Lz in %s', fname);
+    end
+
+    dV = vals(1) * vals(2) * vals(3);
+end
+

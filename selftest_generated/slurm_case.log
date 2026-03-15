@@ -1,0 +1,5 @@
+Test slurm log
+Generated for self test
+Step CPU Time Temp
+100 0.10 10 300
+200 0.20 20 310
