@@ -5,8 +5,9 @@ function out = analyze_chunk_field(chunkFile, varargin)
 % Core behavior:
 % 1) If variable exists in raw chunk data, plot it directly.
 % 2) If not, allow derived variables:
-%    T, Sxx, Syy, Szz, Sxy, Sxz, Syz, vonMisesS
-%    (stress is based on compute_temp_stress_chunk results).
+%    T, vx, vy, vz, velocity, pressure, density,
+%    Sxx, Syy, Szz, Sxy, Sxz, Syz, vonMisesS
+%    (all based on compute_temp_stress_chunk results).
 % 3) Otherwise throw error.
 
     p = inputParser;
@@ -116,22 +117,27 @@ function [z, yLabel, pack] = computeDerived(varReqRaw, chunkFile, selectorArgs, 
     pack = [];
 
     isT = strcmp(v, 't');
+    isVelocity = any(strcmp(v, {'vx','vy','vz','velocity','speed'}));
+    isPressure = any(strcmp(v, {'pressure','p'}));
+    isDensity = any(strcmp(v, {'density','rho'}));
     isStress = any(strcmp(v, {'sxx','syy','szz','sxy','sxz','syz','vonmisess'}));
 
-    if ~(isT || isStress)
+    if ~(isT || isVelocity || isPressure || isDensity || isStress)
         error('analyze_chunk_field:UnknownVariable', ...
             ['Variable "%s" not found in raw data and not in supported derived set: ', ...
-             'T,Sxx,Syy,Szz,Sxy,Sxz,Syz,vonMisesS.'], varReqRaw);
+             'T,vx,vy,vz,velocity,pressure,density,Sxx,Syy,Szz,Sxy,Sxz,Syz,vonMisesS.'], ...
+             varReqRaw);
     end
 
-    if isStress
+    needsDV = isStress || isPressure || isDensity;
+    if needsDV
         if isempty(dV) || ~isscalar(dV) || ~isfinite(dV) || dV <= 0
             error('analyze_chunk_field:NeedDV', ...
-                'Derived stress variable "%s" requires a positive scalar dV.', varReqRaw);
+                'Derived variable "%s" requires a positive scalar dV.', varReqRaw);
         end
         c = compute_temp_stress_chunk(chunkFile, selectorArgs{:}, 'dV', dV);
     else
-        % T does not strictly need stress scale. pass a valid placeholder dV.
+        % Velocity and T do not strictly need dV. Pass a valid placeholder.
         c = compute_temp_stress_chunk(chunkFile, selectorArgs{:}, 'dV', 1.0);
     end
 
@@ -139,6 +145,31 @@ function [z, yLabel, pack] = computeDerived(varReqRaw, chunkFile, selectorArgs, 
         case 't'
             z = c.T;
             yLabel = 'T';
+
+        case 'vx'
+            z = c.vx;
+            yLabel = 'Vx';
+
+        case 'vy'
+            z = c.vy;
+            yLabel = 'Vy';
+
+        case 'vz'
+            z = c.vz;
+            yLabel = 'Vz';
+
+        case {'velocity','speed'}
+            z = c.speed;
+            yLabel = 'Velocity';
+
+        case {'pressure','p'}
+            assertPressureComputed(c, 'Pressure');
+            z = c.pressure;
+            yLabel = 'Pressure (GPa)';
+
+        case {'density','rho'}
+            z = c.density;
+            yLabel = 'Density (g/cm^3)';
 
         case 'sxx'
             assertComputed(c, 'xx', 'Sxx');
@@ -191,6 +222,13 @@ function assertComputed(c, key, alias)
     if ~isfield(c, 'computed') || ~isfield(c.computed, key) || ~c.computed.(key)
         error('analyze_chunk_field:MissingStressComponent', ...
             'Cannot compute %s because required stress component "%s" is unavailable.', alias, key);
+    end
+end
+
+function assertPressureComputed(c, alias)
+    if ~isfield(c, 'computed') || ~isfield(c.computed, 'pressure') || ~c.computed.pressure
+        error('analyze_chunk_field:MissingPressure', ...
+            'Cannot compute %s because required diagonal stress components are unavailable.', alias);
     end
 end
 

@@ -1,5 +1,5 @@
 function out = compute_temp_stress_chunk(chunkPath, varargin)
-%COMPUTE_TEMP_STRESS_CHUNK Compute temperature and Cauchy stress from chunk data.
+%COMPUTE_TEMP_STRESS_CHUNK Compute chunk-average velocity, temperature, stress, pressure, and density.
 % MATLAB R2016b compatible.
 %
 % Required columns (or aliases):
@@ -29,6 +29,7 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
     p.addParameter('bar2GPa', 1e-4, @isnumeric);
     p.addParameter('mvv2e', 1.0364269e-4, @isnumeric);
     p.addParameter('nktv2p', 1.6021765e6, @isnumeric);
+    p.addParameter('mass2gcm3', 1.66053906660, @isnumeric);
 
     p.parse(chunkPath, varargin{:});
     opt = p.Results;
@@ -100,6 +101,8 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
     vx = safeDiv(mvx, M);
     vy = safeDiv(mvy, M);
     vz = safeDiv(mvz, M);
+    speed = sqrt(vx.^2 + vy.^2 + vz.^2);
+    density = safeDiv(M, dV) .* opt.mass2gcm3;
 
     KE_bulk = 0.5 .* opt.mvv2e .* M .* (vx.^2 + vy.^2 + vz.^2);
     KE_th   = KE + KE_bulk - opt.mvv2e .* (vx.*mvx + vy.*mvy + vz.*mvz);
@@ -119,9 +122,11 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
     sigma_xy = [];
     sigma_xz = [];
     sigma_yz = [];
+    pressure = [];
 
     computed = struct('xx', false, 'yy', false, 'zz', false, ...
-                      'xy', false, 'xz', false, 'yz', false);
+                      'xy', false, 'xz', false, 'yz', false, ...
+                      'pressure', false);
 
     if ~isempty(mvvxx) && ~isempty(Wxx)
         Sxx_th = opt.mvv2e .* (mvvxx + M .* vx.^2 - 2.0 .* vx .* mvx) .* opt.nktv2p;
@@ -153,6 +158,10 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
         sigma_yz = (Wyz - Syz_th) ./ dV .* opt.bar2GPa;
         computed.yz = true;
     end
+    if computed.xx && computed.yy && computed.zz
+        pressure = - (sigma_xx + sigma_yy + sigma_zz) ./ 3.0;
+        computed.pressure = true;
+    end
 
     out = struct();
     out.filePath = chunkPath;
@@ -166,10 +175,13 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
     out.vx = vx;
     out.vy = vy;
     out.vz = vz;
+    out.speed = speed;
     out.KE = KE;
     out.KE_bulk = KE_bulk;
     out.KE_th = KE_th;
     out.T = T;
+    out.pressure = pressure;
+    out.density = density;
 
     out.S_th = struct('xx', Sxx_th, 'yy', Syy_th, 'zz', Szz_th, ...
                       'xy', Sxy_th, 'xz', Sxz_th, 'yz', Syz_th);
@@ -177,7 +189,9 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
                        'xy', sigma_xy, 'xz', sigma_xz, 'yz', sigma_yz);
     out.computed = computed;
 
-    out.table = table(T, 'VariableNames', {'T'});
+    out.table = table(vx, vy, vz, speed, density, T, ...
+        'VariableNames', {'vx','vy','vz','speed','density_gcm3','T'});
+    if computed.pressure, out.table.pressure = pressure; end
     if computed.xx, out.table.sigma_xx = sigma_xx; end
     if computed.yy, out.table.sigma_yy = sigma_yy; end
     if computed.zz, out.table.sigma_zz = sigma_zz; end

@@ -5,7 +5,9 @@ function result = cluster_postprocess(clusterPath, varargin)
 % Example:
 % result = cluster_postprocess('cluster_chunk.txt', ...
 %     'SelectBy', 'Time', 'Time', 33.0, 'SlurmPath', 'slurm_9.log', ...
-%     'Dim', 2, 'Dx', 0.025, 'Range_c_x', [0 20], 'XVarForMean', 'c_x');
+%     'Dim', 2, 'Dx', 0.025, 'Range_c_x', [0 20], ...
+%     'Range_diameter', [0.5 5.0], 'MeanPowerM', 1, 'MeanPowerN', 0, ...
+%     'XVarForMean', 'c_x');
 
     p = inputParser;
     p.addRequired('clusterPath', @isTextScalar);
@@ -26,9 +28,12 @@ function result = cluster_postprocess(clusterPath, varargin)
     p.addParameter('Range_vx', [], @isnumeric);
     p.addParameter('Range_vy', [], @isnumeric);
     p.addParameter('Range_vz', [], @isnumeric);
+    p.addParameter('Range_diameter', [], @isnumeric);
 
     p.addParameter('XVarForMean', 'c_x', @isTextScalar);       % c_x/c_y/c_z/vx/vy/vz
     p.addParameter('MeanNumBins', 20, @isnumeric);
+    p.addParameter('MeanPowerM', 1, @isnumeric);
+    p.addParameter('MeanPowerN', 0, @isnumeric);
     p.addParameter('HistNumBins', 30, @isnumeric);
     p.addParameter('HistScale', 'linear', @isTextScalar);      % linear/semilogx/semilogy/loglog/log
 
@@ -41,6 +46,10 @@ function result = cluster_postprocess(clusterPath, varargin)
     opt.NcountVar = toChar(opt.NcountVar);
     opt.XVarForMean = toChar(opt.XVarForMean);
     opt.HistScale = toChar(opt.HistScale);
+    validateMeanPower(opt.MeanPowerM, 'MeanPowerM');
+    validateMeanPower(opt.MeanPowerN, 'MeanPowerN');
+
+    meanDefinition = struct('m', opt.MeanPowerM, 'n', opt.MeanPowerN);
 
     selectorArgs = {'SelectBy', opt.SelectBy, ...
                     'Index', opt.Index, ...
@@ -74,6 +83,9 @@ function result = cluster_postprocess(clusterPath, varargin)
     validDia = isfinite(diameterAll) & (diameterAll > 0);
     dataSel = dataSel(validDia, :);
     diameter = diameterAll(validDia);
+    diaMask = applyNumericRange(true(size(diameter)), diameter, opt.Range_diameter, 'diameter');
+    dataSel = dataSel(diaMask, :);
+    diameter = diameter(diaMask);
 
     if isempty(diameter)
         warning('cluster_postprocess:NoValidClusters', ...
@@ -90,12 +102,13 @@ function result = cluster_postprocess(clusterPath, varargin)
         result.diameter = [];
         result.stats = [];
         result.fit = [];
+        result.meanDefinition = meanDefinition;
         result.meanByBin = struct('edges', [], 'centers', [], 'meanDiameter', [], 'count', []);
-        result.plots = struct('histFig', [], 'cdfFig', [], 'meanFig', []);
+        result.plots = emptyPlotsStruct();
         return;
     end
 
-    stats = basicStats(diameter);
+    stats = basicStats(diameter, opt.MeanPowerM, opt.MeanPowerN);
     fit = fitByMoments(diameter);
 
     xVarName = matlab.lang.makeValidName(opt.XVarForMean);
@@ -103,15 +116,18 @@ function result = cluster_postprocess(clusterPath, varargin)
     hasMeanX = isfield(col, xVarName);
     if hasMeanX
         xVals = dataSel(:, col.(xVarName));
-        meanBin = binMeanDiameter(xVals, diameter, opt.MeanNumBins);
+        meanBin = binMeanDiameter(xVals, diameter, opt.MeanNumBins, opt.MeanPowerM, opt.MeanPowerN);
     else
         warning('cluster_postprocess:BadXVar', ...
             'XVarForMean "%s" not found. Skip mean-diameter-by-bin plot.', opt.XVarForMean);
     end
 
-    plots = struct();
+    plots = emptyPlotsStruct();
     if opt.MakePlots
-        plots.histFig = plotHistogramWithFits(diameter, opt.HistNumBins, fit, opt.HistScale);
+        histData = buildHistogramData(diameter, opt.HistNumBins);
+        plots.countFig = plotCountDistributionWithFits(histData, fit, opt.HistScale);
+        plots.probFig = plotProbabilityDistributionWithFits(histData, fit, opt.HistScale);
+        plots.histFig = plots.countFig; % Deprecated compatibility alias.
         plots.cdfFig  = plotCDFBothDirections(diameter);
         hasMeanData = any(~isnan(meanBin.meanDiameter) & (meanBin.count > 0));
         if hasMeanX && hasMeanData
@@ -137,6 +153,7 @@ function result = cluster_postprocess(clusterPath, varargin)
     result.diameter = diameter;
     result.stats = stats;
     result.fit = fit;
+    result.meanDefinition = meanDefinition;
     result.meanByBin = meanBin;
     result.plots = plots;
 end
@@ -182,6 +199,18 @@ function mask = applyRange(mask, data, col, varName, rangeVal)
     mask = mask & (v >= lo) & (v <= hi);
 end
 
+function mask = applyNumericRange(mask, values, rangeVal, varName)
+    if isempty(rangeVal)
+        return;
+    end
+    if numel(rangeVal) ~= 2
+        error('cluster_postprocess:BadRange', 'Range for %s must be [min max].', varName);
+    end
+    lo = min(rangeVal(:));
+    hi = max(rangeVal(:));
+    mask = mask & (values >= lo) & (values <= hi);
+end
+
 function d = equivalentDiameter(ncount, dx, dim)
     vol = ncount .* (dx ^ dim);
     if dim == 2
@@ -193,12 +222,12 @@ function d = equivalentDiameter(ncount, dx, dim)
     end
 end
 
-function s = basicStats(x)
+function s = basicStats(x, meanPowerM, meanPowerN)
     s = struct();
     s.n = numel(x);
     s.min = min(x);
     s.max = max(x);
-    s.mean = mean(x);
+    s.mean = momentRatioMean(x, meanPowerM, meanPowerN);
     s.std = std(x);
     s.median = median(x);
 end
@@ -221,7 +250,7 @@ function fit = fitByMoments(x)
     fit.gamma = struct('n', n, 'xMean', m);
 end
 
-function out = binMeanDiameter(x, d, nBins)
+function out = binMeanDiameter(x, d, nBins, meanPowerM, meanPowerN)
     if isempty(x)
         out = struct('edges', [], 'centers', [], 'meanDiameter', [], 'count', []);
         return;
@@ -245,7 +274,7 @@ function out = binMeanDiameter(x, d, nBins)
         idx = (binId == i);
         cnt(i) = sum(idx);
         if cnt(i) > 0
-            meanD(i) = mean(d(idx));
+            meanD(i) = momentRatioMean(d(idx), meanPowerM, meanPowerN);
         end
     end
 
@@ -256,34 +285,75 @@ function out = binMeanDiameter(x, d, nBins)
     out.count = cnt;
 end
 
-function fig = plotHistogramWithFits(d, nBins, fit, histScale)
-    fig = figure('Name', 'Cluster Diameter Histogram');
-
+function histData = buildHistogramData(d, nBins)
     [counts, edges] = histcounts(d, nBins);
     centers = 0.5 * (edges(1:end-1) + edges(2:end));
-    bw = mean(diff(edges));
-    prob = counts / sum(counts);
+    widths = diff(edges);
+    if isempty(widths)
+        binWidth = NaN;
+    else
+        binWidth = mean(widths);
+    end
 
-    yyaxis left;
-    hBar = bar(centers, counts, 1.0, 'FaceColor', [0.35 0.6 0.85], 'EdgeColor', 'none');
-    ylabel('Count');
-
-    yyaxis right;
-    hProb = plot(centers, prob, 'ko-', 'LineWidth', 1.2, 'MarkerSize', 4);
-    hold on;
+    totalCount = sum(counts);
+    if totalCount > 0
+        prob = counts / totalCount;
+    else
+        prob = zeros(size(counts));
+    end
 
     xg = linspace(max(min(d), eps), max(d), 300);
-    pLogn = lognormalPdf(xg, fit.lognormal.mu, fit.lognormal.sigma);
-    pGam = gammaPdfImageForm(xg, fit.gamma.n, fit.gamma.xMean);
+    histData = struct();
+    histData.counts = counts;
+    histData.edges = edges;
+    histData.centers = centers;
+    histData.binWidth = binWidth;
+    histData.totalCount = totalCount;
+    histData.prob = prob;
+    histData.fitX = xg;
+end
 
-    hLogn = plot(xg, pLogn * bw, 'r-', 'LineWidth', 1.6);
-    hGam = plot(xg, pGam * bw, 'm--', 'LineWidth', 1.6);
+function fig = plotCountDistributionWithFits(histData, fit, histScale)
+    fig = figure('Name', 'Cluster Diameter Count Distribution');
 
-    ylabel('Probability');
+    hBar = bar(histData.centers, histData.counts, 1.0, ...
+        'FaceColor', [0.35 0.6 0.85], 'EdgeColor', 'none');
+    hold on;
+
+    pLogn = lognormalPdf(histData.fitX, fit.lognormal.mu, fit.lognormal.sigma);
+    pGam = gammaPdfImageForm(histData.fitX, fit.gamma.n, fit.gamma.xMean);
+    scale = histData.totalCount * histData.binWidth;
+    hLogn = plot(histData.fitX, pLogn * scale, 'r-', 'LineWidth', 1.6);
+    hGam = plot(histData.fitX, pGam * scale, 'm--', 'LineWidth', 1.6);
+
     xlabel('Equivalent Diameter');
-    title('Histogram (Count + Probability) with Lognormal/Gamma fits');
-    legend([hBar, hProb, hLogn, hGam], ...
-        {'Count (hist)', 'Probability (bin)', 'Lognormal fit', 'Gamma fit'}, ...
+    ylabel('Count');
+    title('Cluster count distribution with Lognormal/Gamma fits');
+    legend([hBar, hLogn, hGam], ...
+        {'Count (hist)', 'Lognormal fit', 'Gamma fit'}, ...
+        'Location', 'best');
+    applyHistScale(histScale);
+    grid on;
+end
+
+function fig = plotProbabilityDistributionWithFits(histData, fit, histScale)
+    fig = figure('Name', 'Cluster Diameter Probability Distribution');
+
+    hBar = bar(histData.centers, histData.prob, 1.0, ...
+        'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none');
+    hold on;
+
+    pLogn = lognormalPdf(histData.fitX, fit.lognormal.mu, fit.lognormal.sigma);
+    pGam = gammaPdfImageForm(histData.fitX, fit.gamma.n, fit.gamma.xMean);
+    scale = histData.binWidth;
+    hLogn = plot(histData.fitX, pLogn * scale, 'r-', 'LineWidth', 1.6);
+    hGam = plot(histData.fitX, pGam * scale, 'm--', 'LineWidth', 1.6);
+
+    xlabel('Equivalent Diameter');
+    ylabel('Probability');
+    title('Cluster probability distribution with Lognormal/Gamma fits');
+    legend([hBar, hLogn, hGam], ...
+        {'Probability (bin)', 'Lognormal fit', 'Gamma fit'}, ...
         'Location', 'best');
     applyHistScale(histScale);
     grid on;
@@ -296,28 +366,16 @@ function applyHistScale(histScale)
     switch mode
         case 'linear'
             set(ax, 'XScale', 'linear');
-            yyaxis left;
-            set(gca, 'YScale', 'linear');
-            yyaxis right;
-            set(gca, 'YScale', 'linear');
+            set(ax, 'YScale', 'linear');
         case 'semilogx'
             set(ax, 'XScale', 'log');
-            yyaxis left;
-            set(gca, 'YScale', 'linear');
-            yyaxis right;
-            set(gca, 'YScale', 'linear');
+            set(ax, 'YScale', 'linear');
         case {'semilogy', 'semilog'}
             set(ax, 'XScale', 'linear');
-            yyaxis left;
-            set(gca, 'YScale', 'log');
-            yyaxis right;
-            set(gca, 'YScale', 'log');
+            set(ax, 'YScale', 'log');
         case {'loglog', 'log'}
             set(ax, 'XScale', 'log');
-            yyaxis left;
-            set(gca, 'YScale', 'log');
-            yyaxis right;
-            set(gca, 'YScale', 'log');
+            set(ax, 'YScale', 'log');
         otherwise
             error('cluster_postprocess:BadHistScale', ...
                 'HistScale must be linear/semilogx/semilogy/loglog/log.');
@@ -361,6 +419,32 @@ function fig = plotMeanByBin(meanBin, xVarName)
     ylabel('Mean Equivalent Diameter');
     title('Mean diameter vs binned variable');
     grid on;
+end
+
+function plots = emptyPlotsStruct()
+    plots = struct('histFig', [], 'countFig', [], 'probFig', [], 'cdfFig', [], 'meanFig', []);
+end
+
+function meanVal = momentRatioMean(x, meanPowerM, meanPowerN)
+    if isempty(x)
+        meanVal = NaN;
+        return;
+    end
+
+    num = sum(x .^ meanPowerM);
+    den = sum(x .^ meanPowerN);
+    if ~isfinite(num) || ~isfinite(den) || den == 0
+        meanVal = NaN;
+    else
+        meanVal = num / den;
+    end
+end
+
+function validateMeanPower(v, name)
+    if ~(isnumeric(v) && isscalar(v) && isreal(v) && isfinite(v))
+        error('cluster_postprocess:BadMeanPower', ...
+            '%s must be a finite real scalar.', name);
+    end
 end
 
 function p = lognormalPdf(x, mu, sigma)

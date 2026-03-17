@@ -10,15 +10,15 @@ function out = run_analysis(taskType, varargin)
 %
 % taskType='chunk' required params:
 %   ChunkDim : '1d' or '2d'
-%   Variable : e.g. c_rho / T / Sxx ... / vonMisesS
+%   Variable : e.g. c_rho / T / velocity / pressure / density / Sxx ... / vonMisesS
 % Optional:
-%   ChunkFile, dV, PlotOptions, DoPlot
+%   ChunkFile (.txt), dV, PlotOptions, DoPlot
 %
 % taskType='cluster' optional params:
-%   ClusterFile, ClusterOptions
+%   ClusterFile (.txt), ClusterOptions
 %
 % taskType='vx' optional params:
-%   VxFile, VxOptions
+%   VxFile (.txt), VxOptions
 
     p = inputParser;
     p.addRequired('taskType', @isTextScalar);
@@ -83,11 +83,11 @@ function out = run_analysis(taskType, varargin)
                 'PlotOptions', opt.PlotOptions);
 
         case 'cluster'
-            clusterFile = resolveByPattern(opt.BaseDir, opt.ClusterFile, 'cluster_chunk*');
+            clusterFile = resolveByPattern(opt.BaseDir, opt.ClusterFile, 'cluster_chunk*.txt', true, 'ClusterFile');
             out = cluster_postprocess(clusterFile, selArgs{:}, opt.ClusterOptions{:});
 
         case 'vx'
-            vxFile = resolveByPattern(opt.BaseDir, opt.VxFile, 'vx_chunk*');
+            vxFile = resolveByPattern(opt.BaseDir, opt.VxFile, 'vx_chunk*.txt', true, 'VxFile');
             out = vx_chunk_cumulative(vxFile, selArgs{:}, opt.VxOptions{:});
 
         otherwise
@@ -109,14 +109,7 @@ end
 
 function p = resolveChunkFile(baseDir, chunkFile, chunkDim)
     if ~isempty(chunkFile)
-        if isAbsolutePath(chunkFile)
-            p = chunkFile;
-        else
-            p = fullfile(baseDir, chunkFile);
-        end
-        if ~exist(p, 'file')
-            error('run_analysis:ChunkFileNotFound', 'Chunk file not found: %s', p);
-        end
+        p = resolvePreferredTextFile(baseDir, chunkFile, 'ChunkFile');
         return;
     end
 
@@ -130,16 +123,15 @@ function p = resolveChunkFile(baseDir, chunkFile, chunkDim)
     end
 end
 
-function p = resolveByPattern(baseDir, preferred, pattern)
+function p = resolveByPattern(baseDir, preferred, pattern, requireTxt, argName)
+    if nargin < 4
+        requireTxt = false;
+    end
+    if nargin < 5
+        argName = 'File';
+    end
     if ~isempty(preferred)
-        if isAbsolutePath(preferred)
-            p = preferred;
-        else
-            p = fullfile(baseDir, preferred);
-        end
-        if ~exist(p, 'file')
-            error('run_analysis:PreferredFileNotFound', 'File not found: %s', p);
-        end
+        p = resolvePreferredFile(baseDir, preferred, argName, requireTxt);
         return;
     end
 
@@ -156,6 +148,35 @@ function p = resolveByPattern(baseDir, preferred, pattern)
     end
 
     p = fullfile(baseDir, files(1).name);
+end
+
+function p = resolvePreferredTextFile(baseDir, preferred, argName)
+    p = resolvePreferredFile(baseDir, preferred, argName, true);
+end
+
+function p = resolvePreferredFile(baseDir, preferred, argName, requireTxt)
+    if nargin < 4
+        requireTxt = false;
+    end
+
+    if requireTxt && ~hasTxtSuffix(preferred)
+        error('run_analysis:MissingTxtSuffix', ...
+            '%s must include the .txt suffix to avoid matching cache files: %s', ...
+            argName, preferred);
+    end
+
+    if isAbsolutePath(preferred)
+        p = preferred;
+    else
+        p = fullfile(baseDir, preferred);
+    end
+    if ~exist(p, 'file')
+        error('run_analysis:PreferredFileNotFound', 'File not found: %s', p);
+    end
+end
+
+function tf = hasTxtSuffix(p)
+    tf = ~isempty(regexpi(p, '\.txt$', 'once'));
 end
 
 function tf = isAbsolutePath(p)
