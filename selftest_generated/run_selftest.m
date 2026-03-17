@@ -9,7 +9,9 @@ if logFid < 0
     error('selftest:LogOpenFail', 'Cannot open selftest_output.txt');
 end
 
+oldFigureVisible = get(0, 'DefaultFigureVisible');
 set(0,'DefaultFigureVisible','off');
+figureVisibleCleanup = onCleanup(@() restoreFigureVisible(oldFigureVisible)); %#ok<NASGU>
 addpath(fileparts(baseDir));
 
 fprintf('BASE|%s\n', baseDir); fprintf(logFid, 'BASE|%s\n', baseDir);
@@ -54,8 +56,13 @@ progressText4 = evalc('read_bin_chunk(progressChunkPath, ''ProgressMode'', ''con
 assertContainsText(progressText4, 'Reading file', ...
     'Repeated read_bin_chunk call should still print progress.');
 progressTextAuto = evalc('read_bin_chunk(progressChunkPath, ''ProgressMode'', ''auto'');');
-assertContainsText(progressTextAuto, 'Reading file', ...
-    'ProgressMode=auto should fall back to console output in batch mode.');
+if usejava('desktop') && usejava('awt')
+    assertTrue(isempty(strtrim(progressTextAuto)) || ~isempty(strfind(progressTextAuto, 'Reading file')), ...
+        'ProgressMode=auto should use waitbar or console output on desktop MATLAB.');
+else
+    assertContainsText(progressTextAuto, 'Reading file', ...
+        'ProgressMode=auto should fall back to console output in batch mode.');
+end
 progressTextOff = evalc('read_bin_chunk(progressChunkPath, ''ProgressMode'', ''off'');');
 assertTrue(isempty(strtrim(progressTextOff)), ...
     'read_bin_chunk with ProgressMode=off should not print progress.');
@@ -273,5 +280,13 @@ if exist(dirPath, 'dir')
     catch
         % ignore cleanup failures
     end
+end
+end
+
+function restoreFigureVisible(oldValue)
+try
+    set(0, 'DefaultFigureVisible', oldValue);
+catch
+    % ignore restore failures
 end
 end
