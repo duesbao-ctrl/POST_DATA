@@ -12,6 +12,18 @@ Use `run_analysis(taskType, ...)` as the unified interface:
 
 See `analysis_usage_examples.m` for end-to-end examples.
 
+## Read progress
+
+`read_chunk_step_fast.m` builds a `.stepidx.mat` cache on the first slow scan,
+then reuses it on later reads. Use `ProgressMode` with `run_analysis(...)`,
+`read_chunk_step_fast(...)`, or `read_bin_chunk(...)` to control progress
+display:
+
+- `auto` uses `waitbar` on desktop MATLAB and console output in batch mode
+- `off` disables progress output
+- `waitbar` forces GUI progress
+- `console` forces command-window progress
+
 ## Included files
 
 - `run_analysis.m` coordinates task selection and common options

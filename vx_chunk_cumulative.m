@@ -14,6 +14,7 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
     p.addParameter('Time', [], @isnumeric);
     p.addParameter('SlurmPath', '', @isTextScalar);
     p.addParameter('SlurmModuleIndex', 1, @isnumeric);
+    p.addParameter('ProgressMode', 'auto', @isTextScalar);
 
     p.addParameter('VelocityFactor', 0.001, @isnumeric);  % v = Chunk * VelocityFactor
     p.addParameter('DensityVars', {}, @(x) iscell(x) || isTextScalar(x));
@@ -23,13 +24,15 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
     vxChunkPath = toChar(vxChunkPath);
     opt.SelectBy = toChar(opt.SelectBy);
     opt.SlurmPath = toChar(opt.SlurmPath);
+    opt.ProgressMode = toChar(opt.ProgressMode);
 
     selectorArgs = {'SelectBy', opt.SelectBy, ...
                     'Index', opt.Index, ...
                     'TimeStep', opt.TimeStep, ...
                     'Time', opt.Time, ...
                     'SlurmPath', opt.SlurmPath, ...
-                    'SlurmModuleIndex', opt.SlurmModuleIndex};
+                    'SlurmModuleIndex', opt.SlurmModuleIndex, ...
+                    'ProgressMode', opt.ProgressMode};
 
     S = read_chunk_step_fast(vxChunkPath, selectorArgs{:});
     stepIdx = S.stepIndex;

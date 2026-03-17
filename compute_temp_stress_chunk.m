@@ -22,6 +22,7 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
     p.addParameter('Time', [], @isnumeric);
     p.addParameter('SlurmPath', '', @isTextScalar);
     p.addParameter('SlurmModuleIndex', 1, @isnumeric);
+    p.addParameter('ProgressMode', 'auto', @isTextScalar);
 
     p.addParameter('dV', [], @isnumeric);
 
@@ -36,13 +37,15 @@ function out = compute_temp_stress_chunk(chunkPath, varargin)
     chunkPath = toChar(chunkPath);
     opt.SelectBy = toChar(opt.SelectBy);
     opt.SlurmPath = toChar(opt.SlurmPath);
+    opt.ProgressMode = toChar(opt.ProgressMode);
 
     selectorArgs = {'SelectBy', opt.SelectBy, ...
                     'Index', opt.Index, ...
                     'TimeStep', opt.TimeStep, ...
                     'Time', opt.Time, ...
                     'SlurmPath', opt.SlurmPath, ...
-                    'SlurmModuleIndex', opt.SlurmModuleIndex};
+                    'SlurmModuleIndex', opt.SlurmModuleIndex, ...
+                    'ProgressMode', opt.ProgressMode};
 
     step = read_chunk_step_fast(chunkPath, selectorArgs{:});
     stepIdx = step.stepIndex;

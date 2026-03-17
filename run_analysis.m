@@ -6,7 +6,7 @@ function out = run_analysis(taskType, varargin)
 %
 % Common selector params (for all 3 categories):
 %   SelectBy: 'Index' | 'TimeStep' | 'Time'
-%   Index, TimeStep, Time, SlurmPath, SlurmModuleIndex
+%   Index, TimeStep, Time, SlurmPath, SlurmModuleIndex, ProgressMode
 %
 % taskType='chunk' required params:
 %   ChunkDim : '1d' or '2d'
@@ -31,6 +31,7 @@ function out = run_analysis(taskType, varargin)
     p.addParameter('Time', [], @isnumeric);
     p.addParameter('SlurmPath', '', @isTextScalar);
     p.addParameter('SlurmModuleIndex', 1, @isnumeric);
+    p.addParameter('ProgressMode', 'auto', @isTextScalar);
 
     p.addParameter('ChunkDim', '2d', @isTextScalar);
     p.addParameter('ChunkFile', '', @isTextScalar);
@@ -51,6 +52,7 @@ function out = run_analysis(taskType, varargin)
     opt.BaseDir = toChar(opt.BaseDir);
     opt.SelectBy = toChar(opt.SelectBy);
     opt.SlurmPath = toChar(opt.SlurmPath);
+    opt.ProgressMode = toChar(opt.ProgressMode);
     opt.ChunkDim = toChar(opt.ChunkDim);
     opt.ChunkFile = toChar(opt.ChunkFile);
     opt.Variable = toChar(opt.Variable);
@@ -69,7 +71,8 @@ function out = run_analysis(taskType, varargin)
                'TimeStep', opt.TimeStep, ...
                'Time', opt.Time, ...
                'SlurmPath', opt.SlurmPath, ...
-               'SlurmModuleIndex', opt.SlurmModuleIndex};
+               'SlurmModuleIndex', opt.SlurmModuleIndex, ...
+               'ProgressMode', opt.ProgressMode};
 
     switch t
         case 'chunk'

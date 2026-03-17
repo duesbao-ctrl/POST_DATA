@@ -17,6 +17,7 @@ function result = cluster_postprocess(clusterPath, varargin)
     p.addParameter('Index', 1, @isnumeric);              % block index in cluster file
     p.addParameter('SlurmPath', '', @isTextScalar);
     p.addParameter('SlurmModuleIndex', 1, @isnumeric);
+    p.addParameter('ProgressMode', 'auto', @isTextScalar);
 
     p.addParameter('Dim', 2, @isnumeric);                % 2 or 3
     p.addParameter('Dx', 1.0, @isnumeric);               % particle spacing
@@ -43,6 +44,7 @@ function result = cluster_postprocess(clusterPath, varargin)
     clusterPath = toChar(clusterPath);
     opt.SelectBy = toChar(opt.SelectBy);
     opt.SlurmPath = toChar(opt.SlurmPath);
+    opt.ProgressMode = toChar(opt.ProgressMode);
     opt.NcountVar = toChar(opt.NcountVar);
     opt.XVarForMean = toChar(opt.XVarForMean);
     opt.HistScale = toChar(opt.HistScale);
@@ -56,7 +58,8 @@ function result = cluster_postprocess(clusterPath, varargin)
                     'TimeStep', opt.TimeStep, ...
                     'Time', opt.Time, ...
                     'SlurmPath', opt.SlurmPath, ...
-                    'SlurmModuleIndex', opt.SlurmModuleIndex};
+                    'SlurmModuleIndex', opt.SlurmModuleIndex, ...
+                    'ProgressMode', opt.ProgressMode};
 
     step = read_chunk_step_fast(clusterPath, selectorArgs{:});
     stepIdx = step.stepIndex;

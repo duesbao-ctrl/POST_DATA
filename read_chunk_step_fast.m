@@ -3,6 +3,7 @@ function out = read_chunk_step_fast(filePath, varargin)
 %   out = READ_CHUNK_STEP_FAST(filePath, 'SelectBy','TimeStep','TimeStep',5000)
 %   out = READ_CHUNK_STEP_FAST(filePath, 'SelectBy','Index','Index',12)
 %   out = READ_CHUNK_STEP_FAST(filePath, 'SelectBy','Time','Time',33.0,'SlurmPath','slurm_9.log')
+%   out = READ_CHUNK_STEP_FAST(filePath, 'ProgressMode','console')
 %
 % Key idea:
 %   Build/reuse a lightweight index of block header positions, then seek to
@@ -16,17 +17,19 @@ function out = read_chunk_step_fast(filePath, varargin)
     p.addParameter('Time', [], @isnumeric);
     p.addParameter('SlurmPath', '', @isTextScalar);
     p.addParameter('SlurmModuleIndex', 1, @isnumeric);
+    p.addParameter('ProgressMode', 'auto', @isTextScalar);
     p.parse(filePath, varargin{:});
     opt = p.Results;
 
     filePath = toChar(filePath);
     opt.SelectBy = toChar(opt.SelectBy);
     opt.SlurmPath = toChar(opt.SlurmPath);
+    opt.ProgressMode = toChar(opt.ProgressMode);
     if ~exist(filePath, 'file')
         error('read_chunk_step_fast:FileNotFound', 'File not found: %s', filePath);
     end
 
-    idx = buildOrLoadIndex(filePath);
+    idx = buildOrLoadIndex(filePath, opt.ProgressMode);
     nBlocks = numel(idx.timesteps);
     if nBlocks == 0
         error('read_chunk_step_fast:NoBlocks', 'No timestep blocks found in file: %s', filePath);
@@ -207,7 +210,7 @@ function [sel, reqStep] = locateByStep(idx, req)
     reqStep = req;
 end
 
-function idx = buildOrLoadIndex(filePath)
+function idx = buildOrLoadIndex(filePath, progressMode)
     d = dir(filePath);
     cachePath = [filePath, '.stepidx.mat'];
     curSig = buildQuickSignature(filePath);
@@ -229,8 +232,12 @@ function idx = buildOrLoadIndex(filePath)
         error('read_chunk_step_fast:FileOpenFailed', 'Cannot open file: %s', filePath);
     end
     cleanupObj = onCleanup(@() fclose(fid));
+    tracker = make_file_progress(progressMode, 'Building index', filePath);
+    progressCleanup = onCleanup(@() tracker.close()); %#ok<NASGU>
+    totalBytes = max(d.bytes, 1);
 
     fgetl(fid); fgetl(fid); fgetl(fid);
+    tracker.update(ftell(fid) / totalBytes);
 
     blockPos = zeros(1000, 1);
     dataPos  = zeros(1000, 1);
@@ -271,6 +278,7 @@ function idx = buildOrLoadIndex(filePath)
                 break;
             end
         end
+        tracker.update(ftell(fid) / totalBytes);
     end
 
     blockPos = blockPos(1:n);
@@ -305,6 +313,7 @@ function idx = buildOrLoadIndex(filePath)
     catch
         % ignore cache write failure
     end
+    tracker.finish();
 end
 
 function varNames = parseVarNames(headerLine)

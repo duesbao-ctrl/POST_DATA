@@ -21,6 +21,7 @@ function out = analyze_chunk_field(chunkFile, varargin)
     p.addParameter('Time', [], @isnumeric);
     p.addParameter('SlurmPath', '', @isTextScalar);
     p.addParameter('SlurmModuleIndex', 1, @isnumeric);
+    p.addParameter('ProgressMode', 'auto', @isTextScalar);
 
     p.addParameter('dV', [], @isnumeric);        % required for stress/vonMises
     p.addParameter('DoPlot', true, @islogical);
@@ -32,13 +33,15 @@ function out = analyze_chunk_field(chunkFile, varargin)
     opt.Variable = toChar(opt.Variable);
     opt.SelectBy = toChar(opt.SelectBy);
     opt.SlurmPath = toChar(opt.SlurmPath);
+    opt.ProgressMode = toChar(opt.ProgressMode);
 
     selectorArgs = {'SelectBy', opt.SelectBy, ...
                     'Index', opt.Index, ...
                     'TimeStep', opt.TimeStep, ...
                     'Time', opt.Time, ...
                     'SlurmPath', opt.SlurmPath, ...
-                    'SlurmModuleIndex', opt.SlurmModuleIndex};
+                    'SlurmModuleIndex', opt.SlurmModuleIndex, ...
+                    'ProgressMode', opt.ProgressMode};
 
     step = read_chunk_step_fast(chunkFile, selectorArgs{:});
     D = step.data;

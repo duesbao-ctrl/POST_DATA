@@ -1,6 +1,7 @@
-function out = read_bin_chunk(filePath)
+function out = read_bin_chunk(filePath, varargin)
 %READ_BIN_CHUNK Read chunk-averaged data blocks from LAMMPS-style text output.
 %   out = READ_BIN_CHUNK(filePath)
+%   out = READ_BIN_CHUNK(filePath, 'ProgressMode', 'console')
 %
 % File format:
 %   line 1-2: comments
@@ -20,14 +21,18 @@ function out = read_bin_chunk(filePath)
 %   out.steps(i).totalCount
 %   out.steps(i).data
 
-    if nargin < 1 || isempty(filePath)
-        error('read_bin_chunk:MissingInput', 'filePath is required.');
-    end
-    if isstring(filePath)
-        filePath = char(filePath);
-    end
-    if ~ischar(filePath)
-        error('read_bin_chunk:InvalidInputType', 'filePath must be char or string.');
+    p = inputParser;
+    p.addRequired('filePath', @isTextScalar);
+    p.addParameter('ProgressMode', 'auto', @isTextScalar);
+    p.parse(filePath, varargin{:});
+
+    filePath = toChar(p.Results.filePath);
+    progressMode = toChar(p.Results.ProgressMode);
+    info = dir(filePath);
+    if isempty(info)
+        fileSize = 1;
+    else
+        fileSize = max(info(1).bytes, 1);
     end
 
     fid = fopen(filePath, 'r');
@@ -35,10 +40,13 @@ function out = read_bin_chunk(filePath)
         error('read_bin_chunk:FileOpenFailed', 'Cannot open file: %s', filePath);
     end
     cleanupObj = onCleanup(@() fclose(fid)); 
+    tracker = make_file_progress(progressMode, 'Reading file', filePath);
+    progressCleanup = onCleanup(@() tracker.close()); %#ok<NASGU>
 
     header1 = fgetl(fid);
     header2 = fgetl(fid);
     header3 = fgetl(fid);
+    tracker.update(ftell(fid) / fileSize);
 
     if ~ischar(header1) || ~ischar(header2) || ~ischar(header3)
         error('read_bin_chunk:HeaderTooShort', 'File header is incomplete: %s', filePath);
@@ -110,6 +118,7 @@ function out = read_bin_chunk(filePath)
             'numChunks', numChunks, ...
             'totalCount', totalCount, ...
             'data', data);
+        tracker.update(ftell(fid) / fileSize);
     end
 
     if stepCount == 0
@@ -130,6 +139,7 @@ function out = read_bin_chunk(filePath)
     out.validVarNames = validVarNames;
     out.colIndex = colIndex;
     out.steps = steps;
+    tracker.finish();
 end
 
 function varNames = parseVarNames(headerLine)
@@ -169,5 +179,17 @@ function data = applyEmptyCellNaN(data, varNames)
     m = (data(:, idxN) == 0);
     if any(m) && any(~keep)
         data(m, ~keep) = NaN;
+    end
+end
+
+function tf = isTextScalar(v)
+    tf = ischar(v) || (isstring(v) && isscalar(v));
+end
+
+function s = toChar(v)
+    if isstring(v)
+        s = char(v);
+    else
+        s = v;
     end
 end
