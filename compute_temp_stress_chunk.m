@@ -236,6 +236,15 @@ function v = getOrEmpty(D, idx)
 end
 
 function z = safeDiv(a, b)
+    if isscalar(a) && ~isscalar(b)
+        a = repmat(a, size(b));
+    elseif isscalar(b) && ~isscalar(a)
+        b = repmat(b, size(a));
+    elseif ~isequal(size(a), size(b))
+        error('compute_temp_stress_chunk:SizeMismatch', ...
+            'safeDiv inputs must have matching sizes or one input must be scalar.');
+    end
+
     z = nan(size(a));
     m = (b ~= 0) & isfinite(b);
     z(m) = a(m) ./ b(m);
