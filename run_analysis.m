@@ -3,6 +3,7 @@ function out = run_analysis(taskType, varargin)
 %   out = RUN_ANALYSIS('chunk', ...)
 %   out = RUN_ANALYSIS('cluster', ...)
 %   out = RUN_ANALYSIS('vx', ...)
+%   out = RUN_ANALYSIS('network2d', ...)
 %
 % Common selector params (for all 3 categories):
 %   SelectBy: 'Index' | 'TimeStep' | 'Time'
@@ -19,6 +20,9 @@ function out = run_analysis(taskType, varargin)
 %
 % taskType='vx' optional params:
 %   VxFile (.txt), VxOptions
+%
+% taskType='network2d' optional params:
+%   ChunkFile (.txt), NetworkOptions
 
     p = inputParser;
     p.addRequired('taskType', @isTextScalar);
@@ -45,6 +49,8 @@ function out = run_analysis(taskType, varargin)
 
     p.addParameter('VxFile', '', @isTextScalar);
     p.addParameter('VxOptions', {}, @iscell);
+
+    p.addParameter('NetworkOptions', {}, @iscell);
 
     p.parse(taskType, varargin{:});
     opt = p.Results;
@@ -93,8 +99,16 @@ function out = run_analysis(taskType, varargin)
             vxFile = resolveByPattern(opt.BaseDir, opt.VxFile, 'vx_chunk*.txt', true, 'VxFile');
             out = vx_chunk_cumulative(vxFile, selArgs{:}, opt.VxOptions{:});
 
+        case 'network2d'
+            if ~strcmpi(opt.ChunkDim, '2d')
+                error('run_analysis:BadNetworkChunkDim', ...
+                    'taskType=''network2d'' requires ChunkDim=''2d''.');
+            end
+            chunkFile = resolveChunkFile(opt.BaseDir, opt.ChunkFile, '2d');
+            out = analyze_chunk_network2d(chunkFile, selArgs{:}, opt.NetworkOptions{:});
+
         otherwise
-            error('run_analysis:BadTaskType', 'taskType must be chunk/cluster/vx.');
+            error('run_analysis:BadTaskType', 'taskType must be chunk/cluster/vx/network2d.');
     end
 end
 

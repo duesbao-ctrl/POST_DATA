@@ -206,6 +206,131 @@ else
     fprintf(logFid, 'RUN_VX_PLOTTED|<none>\n');
 end
 
+networkTempDir = tempname;
+mkdir(networkTempDir);
+networkCleanup = onCleanup(@() cleanupTempDir(networkTempDir)); %#ok<NASGU>
+ringPath = fullfile(networkTempDir, 'bin2d_case_ring_dx_1_dy_1.txt');
+diagPath = fullfile(networkTempDir, 'bin2d_case_diag_dx_1_dy_1.txt');
+wrapXPath = fullfile(networkTempDir, 'bin2d_case_wrapx_dx_1_dy_1.txt');
+wrapYPath = fullfile(networkTempDir, 'bin2d_case_wrapy_dx_1_dy_1.txt');
+line1dPath = fullfile(networkTempDir, 'bin1d_case_line_dx_1.txt');
+
+writeChunk2dCase(ringPath, [2 2 2; 2 0 2; 2 2 2], 100);
+writeChunk2dCase(diagPath, [0 2; 2 0], 100);
+writeChunk2dCase(wrapXPath, [0 2 0], 100);
+writeChunk2dCase(wrapYPath, [0; 2; 0], 100);
+writeChunk1dCase(line1dPath, [0 1 2], 100);
+
+expectError(@() run_analysis('network2d', 'BaseDir', networkTempDir, ...
+    'ChunkFile', 'bin2d_case_ring_dx_1_dy_1.txt', ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off'), ...
+    'analyze_chunk_network2d:MissingThresholdN');
+expectError(@() run_analysis('network2d', 'BaseDir', networkTempDir, ...
+    'ChunkFile', 'bin1d_case_line_dx_1.txt', ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'NetworkOptions', {'ThresholdN', 1, 'MakePlots', false}), ...
+    'analyze_chunk_network2d:Not2DChunk');
+
+outNetwork = run_analysis('network2d', 'BaseDir', networkTempDir, ...
+    'ChunkFile', 'bin2d_case_ring_dx_1_dy_1.txt', ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'NetworkOptions', {'ThresholdN', 1, 'MakePlots', false, 'PositionAxis', 'both'});
+assertApprox(outNetwork.global.porosity, 1/9, 1e-12, ...
+    'Porosity should equal pore area fraction.');
+assertApprox(outNetwork.global.interfaceLength, 4, 1e-12, ...
+    'Interface length should equal the central-cell perimeter in the ring case.');
+assertApprox(outNetwork.global.specificInterfaceBulk, 4/9, 1e-12, ...
+    'Bulk specific interface should divide interface length by total valid area.');
+assertTrue(outNetwork.pore.numComponents == 1, ...
+    'Ring case should contain one pore component.');
+assertTrue(outNetwork.matrix.numComponents == 1, ...
+    'Ring case should contain one matrix component.');
+assertTrue(outNetwork.matrix.holeCount == 1, ...
+    'Ring matrix should contain one enclosed hole.');
+assertTrue(outNetwork.pore.holeCount == 0, ...
+    'Single-cell pore should not contain holes.');
+assertTrue(outNetwork.matrix.percolatesX == 1 && outNetwork.matrix.percolatesY == 1, ...
+    'Ring matrix should percolate in both directions under open boundaries.');
+assertTrue(outNetwork.pore.percolatesX == 0 && outNetwork.pore.percolatesY == 0, ...
+    'Central pore should not percolate under open boundaries.');
+assertTrue(outNetwork.pore.connectivity.x.isConnected == 0 && outNetwork.pore.connectivity.y.isConnected == 0, ...
+    'Direct pore connectivity flags should report no x/y connection for the central pore.');
+assertTrue(outNetwork.matrix.connectivity.x.isConnected == 1 && outNetwork.matrix.connectivity.y.isConnected == 1, ...
+    'Direct matrix connectivity flags should report x/y connection for the ring matrix.');
+assertTrue(outNetwork.poreMask(2, 2) == 1 && sum(outNetwork.poreMask(:)) == 1, ...
+    'Threshold-based classification should mark only the center cell as pore.');
+expectedPoreDiameter = 2 * sqrt(1 / pi);
+assertApprox(outNetwork.pore.components.equivDiameter(1), expectedPoreDiameter, 1e-12, ...
+    'Single-cell equivalent diameter should match the analytical 2D definition.');
+assertTrue(sum(outNetwork.pore.positionDistribution.x.count) == 1, ...
+    'Position distribution should contain the single pore component.');
+
+outDiag = analyze_chunk_network2d(diagPath, ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'ThresholdN', 1, 'MakePlots', false);
+assertTrue(outDiag.pore.numComponents == 2, ...
+    'Diagonal pore cells must stay disconnected under 4-neighbor connectivity.');
+
+outWrapXOpen = analyze_chunk_network2d(wrapXPath, ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'ThresholdN', 1, 'Boundary', 'open', 'MakePlots', false);
+assertTrue(outWrapXOpen.pore.numComponents == 2, ...
+    'Left/right edge pores should remain disconnected without periodic boundaries.');
+outWrapX = analyze_chunk_network2d(wrapXPath, ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'ThresholdN', 1, 'Boundary', 'periodic-x', 'MakePlots', false);
+assertTrue(outWrapX.pore.numComponents == 1 && outWrapX.pore.wrapsX == 1, ...
+    'Periodic-x should merge opposite-edge pore cells and mark wrapsX.');
+assertTrue(outWrapX.pore.connectivity.x.isConnected == 1, ...
+    'Direct x-connectivity should report true for periodic wrap-around pores.');
+assertTrue(isnan(outWrapX.pore.holeCount) && isnan(outWrapX.pore.eulerCharacteristic), ...
+    'Periodic boundaries should suppress hole/Euler reporting.');
+
+outWrapXY = analyze_chunk_network2d(wrapYPath, ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'ThresholdN', 1, 'Boundary', 'periodic-xy', 'MakePlots', false);
+assertTrue(outWrapXY.pore.numComponents == 1 && outWrapXY.pore.wrapsY == 1, ...
+    'Periodic-xy should merge opposite-edge pore cells in y and mark wrapsY.');
+
+outNetworkPlot = analyze_chunk_network2d(ringPath, ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'ThresholdN', 1, 'MakePlots', true, 'PositionAxis', 'both');
+assertTrue(ishandle(outNetworkPlot.plots.phaseFig), ...
+    'phaseFig should be returned when MakePlots=true.');
+assertTrue(ishandle(outNetworkPlot.plots.poreLabelFig), ...
+    'poreLabelFig should be returned when MakePlots=true.');
+assertTrue(ishandle(outNetworkPlot.plots.matrixLabelFig), ...
+    'matrixLabelFig should be returned when MakePlots=true.');
+assertTrue(ishandle(outNetworkPlot.plots.connectivityFig), ...
+    'connectivityFig should be returned when MakePlots=true.');
+assertTrue(ishandle(outNetworkPlot.plots.poreCountFig), ...
+    'poreCountFig should be returned when MakePlots=true.');
+assertTrue(isempty(outNetworkPlot.plots.poreProbFig), ...
+    'poreProbFig should stay empty after probability plots were removed.');
+assertTrue(isempty(outNetworkPlot.plots.poreCdfFig), ...
+    'poreCdfFig should stay empty after CDF plots were removed.');
+assertTrue(ishandle(outNetworkPlot.plots.porePositionFigX), ...
+    'porePositionFigX should be returned when PositionAxis includes x.');
+assertTrue(ishandle(outNetworkPlot.plots.porePositionFigY), ...
+    'porePositionFigY should be returned when PositionAxis includes y.');
+assertTrue(ishandle(outNetworkPlot.plots.matrixCountFig), ...
+    'matrixCountFig should be returned when MakePlots=true.');
+assertTrue(isempty(outNetworkPlot.plots.matrixProbFig), ...
+    'matrixProbFig should stay empty after probability plots were removed.');
+assertTrue(isempty(outNetworkPlot.plots.matrixCdfFig), ...
+    'matrixCdfFig should stay empty after CDF plots were removed.');
+assertTrue(ishandle(outNetworkPlot.plots.matrixPositionFigX), ...
+    'matrixPositionFigX should be returned when PositionAxis includes x.');
+assertTrue(ishandle(outNetworkPlot.plots.matrixPositionFigY), ...
+    'matrixPositionFigY should be returned when PositionAxis includes y.');
+closeHandles(collectPlotHandles(outNetworkPlot.plots));
+fprintf('RUN_NETWORK2D|porosity=%.6f|interface=%.6f|poreComponents=%d|matrixHoleCount=%d\n', ...
+    outNetwork.global.porosity, outNetwork.global.interfaceLength, ...
+    outNetwork.pore.numComponents, outNetwork.matrix.holeCount);
+fprintf(logFid, 'RUN_NETWORK2D|porosity=%.6f|interface=%.6f|poreComponents=%d|matrixHoleCount=%d\n', ...
+    outNetwork.global.porosity, outNetwork.global.interfaceLength, ...
+    outNetwork.pore.numComponents, outNetwork.matrix.holeCount);
+
 fprintf('SELFTEST_OK\n');
 fprintf(logFid, 'SELFTEST_OK\n');
 fclose(logFid);
@@ -293,5 +418,72 @@ try
     set(0, 'DefaultFigureVisible', oldValue);
 catch
     % ignore restore failures
+end
+end
+
+function writeChunk2dCase(filePath, ncountGrid, timestep)
+if nargin < 3
+    timestep = 100;
+end
+fid = fopen(filePath, 'w');
+if fid < 0
+    error('selftest:FileOpenFail', 'Cannot open %s for writing.', filePath);
+end
+cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+fprintf(fid, '# selftest chunk header 1\n');
+fprintf(fid, '# selftest chunk header 2\n');
+fprintf(fid, '# Chunk Coord1 Coord2 Ncount\n');
+fprintf(fid, '%g %d %g\n', timestep, numel(ncountGrid), sum(ncountGrid(:)));
+chunkId = 1;
+for iy = 1:size(ncountGrid, 1)
+    for ix = 1:size(ncountGrid, 2)
+        fprintf(fid, '%d %g %g %g\n', chunkId, ix - 1, iy - 1, ncountGrid(iy, ix));
+        chunkId = chunkId + 1;
+    end
+end
+end
+
+function writeChunk1dCase(filePath, ncountLine, timestep)
+if nargin < 3
+    timestep = 100;
+end
+fid = fopen(filePath, 'w');
+if fid < 0
+    error('selftest:FileOpenFail', 'Cannot open %s for writing.', filePath);
+end
+cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+fprintf(fid, '# selftest chunk header 1\n');
+fprintf(fid, '# selftest chunk header 2\n');
+fprintf(fid, '# Chunk Coord1 Ncount\n');
+fprintf(fid, '%g %d %g\n', timestep, numel(ncountLine), sum(ncountLine(:)));
+for ix = 1:numel(ncountLine)
+    fprintf(fid, '%d %g %g\n', ix, ix - 1, ncountLine(ix));
+end
+end
+
+function handles = collectPlotHandles(plotStruct)
+names = fieldnames(plotStruct);
+handles = [];
+for i = 1:numel(names)
+    h = plotStruct.(names{i});
+    if isempty(h)
+        continue;
+    end
+    handles = [handles; h(:)]; %#ok<AGROW>
+end
+end
+
+function closeHandles(handles)
+if isempty(handles)
+    return;
+end
+valid = [];
+for i = 1:numel(handles)
+    if ishandle(handles(i))
+        valid(end+1) = handles(i); %#ok<AGROW>
+    end
+end
+if ~isempty(valid)
+    close(valid);
 end
 end
