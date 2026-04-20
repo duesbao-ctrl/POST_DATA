@@ -26,6 +26,9 @@ function out = analyze_chunk_field(chunkFile, varargin)
     p.addParameter('dV', [], @isnumeric);        % required for stress/vonMises
     p.addParameter('DoPlot', true, @islogical);
     p.addParameter('PlotOptions', {}, @iscell);  % passed to plot_cloud2d/plot_line1d
+    p.addParameter('CoordScale', 1, @isnumeric);
+    p.addParameter('CoordRangeX', [], @isnumeric);
+    p.addParameter('CoordRangeY', [], @isnumeric);
     p.parse(chunkFile, varargin{:});
     opt = p.Results;
     chunkFile = toChar(chunkFile);
@@ -34,6 +37,7 @@ function out = analyze_chunk_field(chunkFile, varargin)
     opt.SelectBy = toChar(opt.SelectBy);
     opt.SlurmPath = toChar(opt.SlurmPath);
     opt.ProgressMode = toChar(opt.ProgressMode);
+    validateCoordOptions(opt);
 
     selectorArgs = {'SelectBy', opt.SelectBy, ...
                     'Index', opt.Index, ...
@@ -62,6 +66,9 @@ function out = analyze_chunk_field(chunkFile, varargin)
     end
 
     [x, y, coordOk, coordMsg] = extractCoordinates(D, col, opt.ChunkDim);
+    if coordOk
+        [x, y, z] = applyCoordinateTransformAndRange(x, y, z, opt);
+    end
 
     fig = [];
     ax = [];
@@ -109,10 +116,53 @@ function out = analyze_chunk_field(chunkFile, varargin)
     out.x = x;
     out.y = y;
     out.value = z;
+    out.coordScale = opt.CoordScale;
+    out.coordRangeX = opt.CoordRangeX;
+    out.coordRangeY = opt.CoordRangeY;
     out.derivedSource = computedPack;
     out.figure = fig;
     out.axes = ax;
     out.plotOut = plotOut;
+end
+
+function validateCoordOptions(opt)
+    if ~(isscalar(opt.CoordScale) && isnumeric(opt.CoordScale) && isfinite(opt.CoordScale) && opt.CoordScale > 0)
+        error('analyze_chunk_field:BadCoordScale', ...
+            'CoordScale must be a positive finite scalar.');
+    end
+    validateRange(opt.CoordRangeX, 'CoordRangeX');
+    validateRange(opt.CoordRangeY, 'CoordRangeY');
+end
+
+function validateRange(v, name)
+    if isempty(v)
+        return;
+    end
+    if ~(isnumeric(v) && numel(v) == 2 && all(isfinite(v(:))) && (v(2) >= v(1)))
+        error('analyze_chunk_field:BadCoordRange', ...
+            '%s must be empty or a finite [min max] range with max >= min.', name);
+    end
+end
+
+function [x, y, z] = applyCoordinateTransformAndRange(x, y, z, opt)
+    x = x .* opt.CoordScale;
+    if ~isempty(y)
+        y = y .* opt.CoordScale;
+    end
+
+    mask = true(size(z));
+    if ~isempty(opt.CoordRangeX)
+        mask = mask & (x >= opt.CoordRangeX(1)) & (x <= opt.CoordRangeX(2));
+    end
+    if strcmpi(opt.ChunkDim, '2d') && ~isempty(opt.CoordRangeY) && ~isempty(y)
+        mask = mask & (y >= opt.CoordRangeY(1)) & (y <= opt.CoordRangeY(2));
+    end
+
+    x = x(mask);
+    if ~isempty(y)
+        y = y(mask);
+    end
+    z = z(mask);
 end
 
 function [z, yLabel, pack] = computeDerived(varReqRaw, chunkFile, selectorArgs, dV)

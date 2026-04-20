@@ -11,6 +11,9 @@ Use `run_analysis(taskType, ...)` as the unified interface:
 - `taskType = 'vx'` for cumulative velocity analysis
 - `taskType = 'network2d'` for pore/matrix network analysis on 2D chunk grids
 
+For coordinate-based chunk and `network2d` outputs, `CoordScale` can be used
+to rescale coordinates before plotting, binning, and range filtering.
+
 See `analysis_usage_examples.m` for end-to-end examples.
 
 ## Read progress
@@ -48,12 +51,27 @@ The module reports 2D morphology statistics for both phases, including:
 - connected-component counts, largest-component fractions, percolation/wrap flags
 - hole count and Euler characteristic for open boundaries
 - number-size distributions and mean-size-vs-position distributions
+- directional profiles of porosity, specific interface, and perpendicular connectivity
 
 The 2D "specific surface area" is defined here as pore-matrix interface length per
 area, with bulk, pore-only, and matrix-only normalizations.
 
+Directional profiles are built from slices along a chosen axis (`ProfileAxis`,
+default `x`). The local porosity and specific-interface curves are computed from
+cells/interfaces inside the requested profile range. The connectivity curve is
+computed differently: the code first identifies globally connected pore
+components along the perpendicular direction, then assigns each connected
+component to a profile bin by its centroid. In each bin the module reports:
+
+- local porosity
+- local specific interface (bulk normalization)
+- centroid-assigned pore connectivity across the perpendicular direction
+
 For periodic boundaries, hole count and Euler characteristic are returned as `NaN`
 because the current version does not define topological holes on the wrapped domain.
+Also note that a component may merge across a periodic seam without being treated
+as directionally connected; `wrapsX` / `wrapsY` require a true non-zero winding
+around the periodic domain.
 
 ## Quick start
 

@@ -13,7 +13,7 @@ function out = run_analysis(taskType, varargin)
 %   ChunkDim : '1d' or '2d'
 %   Variable : e.g. c_rho / T / velocity / pressure / density / Sxx ... / vonMisesS
 % Optional:
-%   ChunkFile (.txt), dV, PlotOptions, DoPlot
+%   ChunkFile (.txt), dV, PlotOptions, DoPlot, CoordScale, CoordRangeX, CoordRangeY
 %
 % taskType='cluster' optional params:
 %   ClusterFile (.txt), ClusterOptions
@@ -43,6 +43,9 @@ function out = run_analysis(taskType, varargin)
     p.addParameter('dV', [], @isnumeric);
     p.addParameter('DoPlot', true, @islogical);
     p.addParameter('PlotOptions', {}, @iscell);
+    p.addParameter('CoordScale', 1, @isnumeric);
+    p.addParameter('CoordRangeX', [], @isnumeric);
+    p.addParameter('CoordRangeY', [], @isnumeric);
 
     p.addParameter('ClusterFile', '', @isTextScalar);
     p.addParameter('ClusterOptions', {}, @iscell);
@@ -89,7 +92,10 @@ function out = run_analysis(taskType, varargin)
                 selArgs{:}, ...
                 'dV', opt.dV, ...
                 'DoPlot', opt.DoPlot, ...
-                'PlotOptions', opt.PlotOptions);
+                'PlotOptions', opt.PlotOptions, ...
+                'CoordScale', opt.CoordScale, ...
+                'CoordRangeX', opt.CoordRangeX, ...
+                'CoordRangeY', opt.CoordRangeY);
 
         case 'cluster'
             clusterFile = resolveByPattern(opt.BaseDir, opt.ClusterFile, 'cluster_chunk*.txt', true, 'ClusterFile');
@@ -105,7 +111,9 @@ function out = run_analysis(taskType, varargin)
                     'taskType=''network2d'' requires ChunkDim=''2d''.');
             end
             chunkFile = resolveChunkFile(opt.BaseDir, opt.ChunkFile, '2d');
-            out = analyze_chunk_network2d(chunkFile, selArgs{:}, opt.NetworkOptions{:});
+            out = analyze_chunk_network2d(chunkFile, selArgs{:}, ...
+                'CoordScale', opt.CoordScale, ...
+                opt.NetworkOptions{:});
 
         otherwise
             error('run_analysis:BadTaskType', 'taskType must be chunk/cluster/vx/network2d.');

@@ -23,9 +23,16 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     p.addParameter('Boundary', 'open', @isTextScalar);
     p.addParameter('Dx', [], @isnumeric);
     p.addParameter('Dy', [], @isnumeric);
+    p.addParameter('CoordScale', 1, @isnumeric);
     p.addParameter('NcountVar', 'Ncount', @isTextScalar);
     p.addParameter('PositionAxis', 'x', @isTextScalar);
     p.addParameter('PositionNumBins', 20, @isnumeric);
+    p.addParameter('PositionRangeX', [], @isnumeric);
+    p.addParameter('PositionRangeY', [], @isnumeric);
+    p.addParameter('ProfileAxis', 'x', @isTextScalar);
+    p.addParameter('ProfileNumBins', 20, @isnumeric);
+    p.addParameter('ProfileRangeX', [], @isnumeric);
+    p.addParameter('ProfileRangeY', [], @isnumeric);
     p.addParameter('HistNumBins', 30, @isnumeric);
     p.addParameter('MakePlots', true, @islogical);
     p.parse(chunkFile, varargin{:});
@@ -38,6 +45,7 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     opt.Boundary = lower(strtrim(toChar(opt.Boundary)));
     opt.NcountVar = toChar(opt.NcountVar);
     opt.PositionAxis = lower(strtrim(toChar(opt.PositionAxis)));
+    opt.ProfileAxis = lower(strtrim(toChar(opt.ProfileAxis)));
 
     validateInputs(opt);
 
@@ -55,6 +63,7 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     col = step.colIndex;
 
     [x, y, ncount] = extractRequiredColumns(data, col, opt.NcountVar);
+    [x, y] = scaleCoordinates(x, y, opt.CoordScale);
     [ncountGrid, validMask, xCenters, yCenters, presentCount] = buildGrid(x, y, ncount);
     [dx, dy, spacingSource] = resolveGridSpacing(opt, chunkFile, xCenters, yCenters);
 
@@ -66,6 +75,7 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
 
     pore = analyzePhase('pore', poreMask, validMask, xCenters, yCenters, dx, dy, opt);
     matrix = analyzePhase('matrix', matrixMask, validMask, xCenters, yCenters, dx, dy, opt);
+    profile = buildDirectionalProfiles(poreMask, validMask, xCenters, yCenters, dx, dy, opt, pore);
 
     cellArea = dx * dy;
     numValidCells = nnz(validMask);
@@ -112,6 +122,12 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
             plots.porePositionFigY = plotPositionDistribution(pore.positionDistribution.y, 'Pore', 'y');
             plots.matrixPositionFigY = plotPositionDistribution(matrix.positionDistribution.y, 'Matrix', 'y');
         end
+        if isfield(profile, 'x')
+            plots.profileFigX = plotDirectionalProfile(profile.x, step.timestep);
+        end
+        if isfield(profile, 'y')
+            plots.profileFigY = plotDirectionalProfile(profile.y, step.timestep);
+        end
     end
 
     summary = struct();
@@ -125,6 +141,8 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     summary.poreConnectedY = pore.connectivity.y.isConnected;
     summary.matrixConnectedX = matrix.connectivity.x.isConnected;
     summary.matrixConnectedY = matrix.connectivity.y.isConnected;
+    summary.profileAxis = opt.ProfileAxis;
+    summary.profileNumBins = round(opt.ProfileNumBins);
 
     out = struct();
     out.filePath = chunkFile;
@@ -134,7 +152,10 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     out.thresholdN = opt.ThresholdN;
     out.connectivity = opt.Connectivity;
     out.boundary = opt.Boundary;
+    out.coordScale = opt.CoordScale;
     out.ncountVar = opt.NcountVar;
+    out.positionRange = struct('x', opt.PositionRangeX, 'y', opt.PositionRangeY);
+    out.profileRange = struct('x', opt.ProfileRangeX, 'y', opt.ProfileRangeY);
     out.xCenters = xCenters;
     out.yCenters = yCenters;
     out.dx = dx;
@@ -146,6 +167,7 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     out.matrixMask = matrixMask;
     out.global = globalStats;
     out.summary = summary;
+    out.profile = profile;
     out.pore = pore;
     out.matrix = matrix;
     out.plots = plots;
@@ -170,16 +192,32 @@ function validateInputs(opt)
         error('analyze_chunk_network2d:BadPositionAxis', ...
             'PositionAxis must be x/y/both.');
     end
+    if ~any(strcmp(opt.ProfileAxis, validAxis))
+        error('analyze_chunk_network2d:BadProfileAxis', ...
+            'ProfileAxis must be x/y/both.');
+    end
     if ~(isscalar(opt.PositionNumBins) && isfinite(opt.PositionNumBins) && opt.PositionNumBins >= 1)
         error('analyze_chunk_network2d:BadPositionNumBins', ...
             'PositionNumBins must be a positive scalar.');
+    end
+    if ~(isscalar(opt.ProfileNumBins) && isfinite(opt.ProfileNumBins) && opt.ProfileNumBins >= 1)
+        error('analyze_chunk_network2d:BadProfileNumBins', ...
+            'ProfileNumBins must be a positive scalar.');
     end
     if ~(isscalar(opt.HistNumBins) && isfinite(opt.HistNumBins) && opt.HistNumBins >= 1)
         error('analyze_chunk_network2d:BadHistNumBins', ...
             'HistNumBins must be a positive scalar.');
     end
+    if ~(isscalar(opt.CoordScale) && isnumeric(opt.CoordScale) && isfinite(opt.CoordScale) && opt.CoordScale > 0)
+        error('analyze_chunk_network2d:BadCoordScale', ...
+            'CoordScale must be a positive finite scalar.');
+    end
     validatePositiveScalarOrEmpty(opt.Dx, 'Dx');
     validatePositiveScalarOrEmpty(opt.Dy, 'Dy');
+    validateRangeOrEmpty(opt.PositionRangeX, 'PositionRangeX');
+    validateRangeOrEmpty(opt.PositionRangeY, 'PositionRangeY');
+    validateRangeOrEmpty(opt.ProfileRangeX, 'ProfileRangeX');
+    validateRangeOrEmpty(opt.ProfileRangeY, 'ProfileRangeY');
 end
 
 function validatePositiveScalarOrEmpty(v, name)
@@ -190,6 +228,21 @@ function validatePositiveScalarOrEmpty(v, name)
         error('analyze_chunk_network2d:BadSpacing', ...
             '%s must be empty or a positive finite scalar.', name);
     end
+end
+
+function validateRangeOrEmpty(v, name)
+    if isempty(v)
+        return;
+    end
+    if ~(isnumeric(v) && numel(v) == 2 && all(isfinite(v(:))) && (v(2) >= v(1)))
+        error('analyze_chunk_network2d:BadRange', ...
+            '%s must be empty or a finite [min max] range with max >= min.', name);
+    end
+end
+
+function [x, y] = scaleCoordinates(x, y, coordScale)
+    x = x .* coordScale;
+    y = y .* coordScale;
 end
 
 function [x, y, ncount] = extractRequiredColumns(data, col, ncountVar)
@@ -247,19 +300,19 @@ end
 
 function [dx, dy, source] = resolveGridSpacing(opt, chunkFile, xCenters, yCenters)
     meta = parseFilenameMetadata(chunkFile);
-    [dx, srcDx] = resolveOneSpacing(opt.Dx, 'dx', xCenters, meta);
-    [dy, srcDy] = resolveOneSpacing(opt.Dy, 'dy', yCenters, meta);
+    [dx, srcDx] = resolveOneSpacing(opt.Dx, 'dx', xCenters, meta, opt.CoordScale);
+    [dy, srcDy] = resolveOneSpacing(opt.Dy, 'dy', yCenters, meta, opt.CoordScale);
     source = struct('dx', srcDx, 'dy', srcDy);
 end
 
-function [spacing, src] = resolveOneSpacing(userValue, key, coords, meta)
+function [spacing, src] = resolveOneSpacing(userValue, key, coords, meta, coordScale)
     if ~isempty(userValue)
-        spacing = userValue;
+        spacing = userValue .* coordScale;
         src = 'option';
         return;
     end
     if isfield(meta, key)
-        spacing = meta.(key);
+        spacing = meta.(key) .* coordScale;
         if isfinite(spacing) && spacing > 0
             src = 'filename';
             return;
@@ -283,7 +336,7 @@ function spacing = inferSpacingFromCoords(coords, key)
     end
 
     spacing = median(diffs);
-    tol = max(1e-9, 1e-6 * max(abs(spacing), 1));
+    tol = max(1e-9, 1e-2 * max(abs(spacing), 1));
     if any(abs(diffs - spacing) > tol)
         error('analyze_chunk_network2d:IrregularGrid', ...
             'Cannot infer %s from irregular coordinate spacing.', key);
@@ -294,18 +347,13 @@ function meta = parseFilenameMetadata(chunkFile)
     [~, nameOnly, ~] = fileparts(chunkFile);
     parts = strsplit(nameOnly, '_');
     meta = struct();
-    if numel(parts) < 3
+    if numel(parts) < 2
         return;
     end
 
-    kv = parts(2:end);
-    if mod(numel(kv), 2) ~= 0
-        return;
-    end
-
-    for i = 1:2:numel(kv)
-        key = matlab.lang.makeValidName(kv{i});
-        val = str2double(kv{i+1});
+    for i = 2:(numel(parts) - 1)
+        key = matlab.lang.makeValidName(parts{i});
+        val = str2double(parts{i+1});
         if ~isnan(val)
             meta.(key) = val;
         end
@@ -339,8 +387,10 @@ function phase = analyzePhase(name, phaseMask, validMask, xCenters, yCenters, dx
     diamStats = computeSummaryStats(comp.equivDiameter);
     equivDiameterDistribution = buildHistogramDistribution(comp.equivDiameter, round(opt.HistNumBins));
     positionDistribution = struct();
-    positionDistribution.x = buildPositionDistribution(comp.centroidX, comp.equivDiameter, round(opt.PositionNumBins));
-    positionDistribution.y = buildPositionDistribution(comp.centroidY, comp.equivDiameter, round(opt.PositionNumBins));
+    positionDistribution.x = buildPositionDistribution(comp.centroidX, comp.equivDiameter, ...
+        round(opt.PositionNumBins), opt.PositionRangeX, dx);
+    positionDistribution.y = buildPositionDistribution(comp.centroidY, comp.equivDiameter, ...
+        round(opt.PositionNumBins), opt.PositionRangeY, dy);
     connectivity = buildDirectionalConnectivity(comp, opt.Boundary, area);
 
     phase = struct();
@@ -383,6 +433,8 @@ function [labelGrid, wrapXComp, wrapYComp] = labelConnectedComponents(phaseMask,
     queue = zeros(numPhase, 1);
     wrapXComp = false(numPhase, 1);
     wrapYComp = false(numPhase, 1);
+    offsetX = nan(ny, nx);
+    offsetY = nan(ny, nx);
     compId = 0;
     phaseLin = find(phaseMask);
 
@@ -397,6 +449,8 @@ function [labelGrid, wrapXComp, wrapYComp] = labelConnectedComponents(phaseMask,
         tail = 1;
         queue(1) = seed;
         labelGrid(seed) = compId;
+        offsetX(seed) = 0;
+        offsetY(seed) = 0;
         wrapX = false;
         wrapY = false;
 
@@ -404,9 +458,11 @@ function [labelGrid, wrapXComp, wrapYComp] = labelConnectedComponents(phaseMask,
             cur = queue(head);
             head = head + 1;
             [r, c] = ind2sub([ny, nx], cur);
+            curOffsetX = offsetX(cur);
+            curOffsetY = offsetY(cur);
 
             for d = 1:4
-                [nr, nc, hasNeighbor, seamX, seamY] = neighborAt(r, c, d, ny, nx, boundary);
+                [nr, nc, hasNeighbor, shiftX, shiftY] = neighborAtWithShift(r, c, d, ny, nx, boundary);
                 if ~hasNeighbor
                     continue;
                 end
@@ -414,19 +470,21 @@ function [labelGrid, wrapXComp, wrapYComp] = labelConnectedComponents(phaseMask,
                     continue;
                 end
 
-                if seamX && nr == r && nc == c
-                    seamX = false;
-                end
-                if seamY && nr == r && nc == c
-                    seamY = false;
-                end
-                wrapX = wrapX || seamX;
-                wrapY = wrapY || seamY;
+                nextOffsetX = curOffsetX + shiftX;
+                nextOffsetY = curOffsetY + shiftY;
 
                 if labelGrid(nr, nc) == 0
                     tail = tail + 1;
-                    queue(tail) = sub2ind([ny, nx], nr, nc);
-                    labelGrid(nr, nc) = compId;
+                    nextLin = sub2ind([ny, nx], nr, nc);
+                    queue(tail) = nextLin;
+                    labelGrid(nextLin) = compId;
+                    offsetX(nextLin) = nextOffsetX;
+                    offsetY(nextLin) = nextOffsetY;
+                else
+                    deltaX = nextOffsetX - offsetX(nr, nc);
+                    deltaY = nextOffsetY - offsetY(nr, nc);
+                    wrapX = wrapX || (deltaX ~= 0);
+                    wrapY = wrapY || (deltaY ~= 0);
                 end
             end
         end
@@ -572,6 +630,246 @@ function value = computeWraps(comp, axisName, boundary)
     end
 end
 
+function profiles = buildDirectionalProfiles(poreMask, validMask, xCenters, yCenters, dx, dy, opt, porePhase)
+    profiles = struct();
+    if strcmp(opt.ProfileAxis, 'x') || strcmp(opt.ProfileAxis, 'both')
+        profiles.x = buildDirectionalProfile(poreMask, validMask, porePhase, ...
+            xCenters, yCenters, dx, dy, 'x', round(opt.ProfileNumBins), opt);
+    end
+    if strcmp(opt.ProfileAxis, 'y') || strcmp(opt.ProfileAxis, 'both')
+        profiles.y = buildDirectionalProfile(poreMask, validMask, porePhase, ...
+            xCenters, yCenters, dx, dy, 'y', round(opt.ProfileNumBins), opt);
+    end
+end
+
+function profile = buildDirectionalProfile(poreMask, validMask, porePhase, ...
+        xCenters, yCenters, dx, dy, axisName, nBins, opt)
+    cellArea = dx * dy;
+    [axisCenters, coordMin, coordMax, perpAxis, axisStep] = resolveProfileAxis(axisName, xCenters, yCenters, dx, dy);
+    coordRange = getProfileRange(opt, axisName);
+    edges = buildAxisEdges(coordRange, coordMin, coordMax, axisStep, nBins);
+    centers = 0.5 * (edges(1:end-1) + edges(2:end));
+    binIdCenter = discretize(axisCenters(:), edges);
+    interfaceLength = computeInterfaceLengthProfile(poreMask, validMask, xCenters, yCenters, dx, dy, axisName, edges);
+
+    validArea = zeros(1, nBins);
+    poreArea = zeros(1, nBins);
+    matrixArea = zeros(1, nBins);
+    porosity = nan(1, nBins);
+    specificInterfaceBulk = nan(1, nBins);
+    specificInterfacePore = nan(1, nBins);
+    specificInterfaceMatrix = nan(1, nBins);
+    connectivityFlag = false(1, nBins);
+    connectivityFraction = nan(1, nBins);
+    connectivityArea = zeros(1, nBins);
+    connectivityComponentCount = zeros(1, nBins);
+    componentPoreArea = zeros(1, nBins);
+
+    for i = 1:nBins
+        idxAxis = find(binIdCenter == i);
+        if isempty(idxAxis)
+            connectivityFraction(i) = 0;
+            continue;
+        end
+
+        [poreSub, validSub] = extractSliceSubgrid(poreMask, validMask, axisName, idxAxis);
+        validArea(i) = nnz(validSub) * cellArea;
+        poreArea(i) = nnz(poreSub) * cellArea;
+        matrixArea(i) = nnz(validSub & ~poreSub) * cellArea;
+        porosity(i) = safeDivide(poreArea(i), validArea(i));
+        specificInterfaceBulk(i) = safeDivide(interfaceLength(i), validArea(i));
+        specificInterfacePore(i) = safeDivide(interfaceLength(i), poreArea(i));
+        specificInterfaceMatrix(i) = safeDivide(interfaceLength(i), matrixArea(i));
+
+        connectivityFlag(i) = false;
+        connectivityFraction(i) = 0;
+    end
+
+    connProfile = buildComponentConnectivityProfile(porePhase.components, porePhase.connectivity, ...
+        axisName, perpAxis, edges);
+    connectivityFlag = connProfile.flag;
+    connectivityFraction = connProfile.fraction;
+    connectivityArea = connProfile.area;
+    connectivityComponentCount = connProfile.count;
+    componentPoreArea = connProfile.componentPoreArea;
+
+    profile = struct();
+    profile.axis = axisName;
+    profile.perpendicularAxis = perpAxis;
+    profile.range = [edges(1), edges(end)];
+    profile.edges = edges;
+    profile.centers = centers;
+    profile.validArea = validArea;
+    profile.poreArea = poreArea;
+    profile.matrixArea = matrixArea;
+    profile.porosity = porosity;
+    profile.interfaceLength = interfaceLength;
+    profile.specificInterfaceBulk = specificInterfaceBulk;
+    profile.specificInterfacePore = specificInterfacePore;
+    profile.specificInterfaceMatrix = specificInterfaceMatrix;
+    profile.connectivityFlag = connectivityFlag;
+    profile.connectivityFraction = connectivityFraction;
+    profile.connectivityArea = connectivityArea;
+    profile.connectivityComponentCount = connectivityComponentCount;
+    profile.componentPoreArea = componentPoreArea;
+end
+
+function [axisCenters, coordMin, coordMax, perpAxis, axisStep] = resolveProfileAxis(axisName, xCenters, yCenters, dx, dy)
+    if strcmp(axisName, 'x')
+        axisCenters = xCenters;
+        coordMin = xCenters(1) - 0.5 * dx;
+        coordMax = xCenters(end) + 0.5 * dx;
+        perpAxis = 'y';
+        axisStep = dx;
+    else
+        axisCenters = yCenters;
+        coordMin = yCenters(1) - 0.5 * dy;
+        coordMax = yCenters(end) + 0.5 * dy;
+        perpAxis = 'x';
+        axisStep = dy;
+    end
+end
+
+function interfaceLength = computeInterfaceLengthProfile(poreMask, validMask, xCenters, yCenters, dx, dy, axisName, edges)
+    [ny, nx] = size(poreMask);
+    nBins = numel(edges) - 1;
+    interfaceLength = zeros(1, nBins);
+
+    for r = 1:ny-1
+        for c = 1:nx
+            if ~(validMask(r, c) && validMask(r+1, c))
+                continue;
+            end
+            if poreMask(r, c) == poreMask(r+1, c)
+                continue;
+            end
+            if strcmp(axisName, 'x')
+                coord = xCenters(c);
+            else
+                coord = 0.5 * (yCenters(r) + yCenters(r+1));
+            end
+            binId = locateBin(coord, edges);
+            if binId > 0
+                interfaceLength(binId) = interfaceLength(binId) + dx;
+            end
+        end
+    end
+
+    for r = 1:ny
+        for c = 1:nx-1
+            if ~(validMask(r, c) && validMask(r, c+1))
+                continue;
+            end
+            if poreMask(r, c) == poreMask(r, c+1)
+                continue;
+            end
+            if strcmp(axisName, 'x')
+                coord = 0.5 * (xCenters(c) + xCenters(c+1));
+            else
+                coord = yCenters(r);
+            end
+            binId = locateBin(coord, edges);
+            if binId > 0
+                interfaceLength(binId) = interfaceLength(binId) + dy;
+            end
+        end
+    end
+end
+
+function [poreSub, validSub] = extractSliceSubgrid(poreMask, validMask, axisName, idxAxis)
+    if strcmp(axisName, 'x')
+        poreSub = poreMask(:, idxAxis);
+        validSub = validMask(:, idxAxis);
+    else
+        poreSub = poreMask(idxAxis, :);
+        validSub = validMask(idxAxis, :);
+    end
+end
+
+function range = getProfileRange(opt, axisName)
+    if strcmp(axisName, 'x')
+        range = opt.ProfileRangeX;
+    else
+        range = opt.ProfileRangeY;
+    end
+end
+
+function edges = buildAxisEdges(coordRange, coordMin, coordMax, axisStep, nBins)
+    if isempty(coordRange)
+        minEdge = coordMin;
+        maxEdge = coordMax;
+    else
+        minEdge = coordRange(1);
+        maxEdge = coordRange(2);
+    end
+    if minEdge == maxEdge
+        pad = 0.5 * axisStep;
+        minEdge = minEdge - pad;
+        maxEdge = maxEdge + pad;
+    end
+    edges = linspace(minEdge, maxEdge, nBins + 1);
+end
+
+function profile = buildComponentConnectivityProfile(comp, connectivity, axisName, perpAxis, edges)
+    nBins = numel(edges) - 1;
+    profile = struct('flag', false(1, nBins), ...
+        'fraction', zeros(1, nBins), ...
+        'area', zeros(1, nBins), ...
+        'count', zeros(1, nBins), ...
+        'componentPoreArea', zeros(1, nBins));
+    if isempty(comp.label)
+        return;
+    end
+
+    if strcmp(axisName, 'x')
+        centroid = comp.centroidX;
+    else
+        centroid = comp.centroidY;
+    end
+    binId = nan(size(centroid));
+    for k = 1:numel(centroid)
+        binId(k) = locateBin(centroid(k), edges);
+    end
+    connectedIds = getConnectivityIds(connectivity, perpAxis);
+    connectedMask = ismember(comp.label, connectedIds);
+
+    for i = 1:nBins
+        idxBin = (binId == i);
+        if ~any(idxBin)
+            continue;
+        end
+        profile.componentPoreArea(i) = sum(comp.area(idxBin));
+        idxConnected = idxBin & connectedMask;
+        profile.flag(i) = any(idxConnected);
+        profile.count(i) = sum(idxConnected);
+        profile.area(i) = sum(comp.area(idxConnected));
+        profile.fraction(i) = safeDivide(profile.area(i), profile.componentPoreArea(i));
+        if isnan(profile.fraction(i))
+            profile.fraction(i) = 0;
+        end
+    end
+end
+
+function ids = getConnectivityIds(connectivity, axisName)
+    if strcmp(axisName, 'x')
+        ids = connectivity.x.componentIds;
+    else
+        ids = connectivity.y.componentIds;
+    end
+end
+
+function binId = locateBin(coord, edges)
+    binId = discretize(coord, edges);
+    if isnan(binId)
+        tol = max(1e-12, 1e-12 * max(abs(edges(end)), 1));
+        if abs(coord - edges(end)) <= tol
+            binId = numel(edges) - 1;
+        else
+            binId = 0;
+        end
+    end
+end
+
 function connectivity = buildDirectionalConnectivity(comp, boundary, phaseArea)
     connectivity = struct();
     connectivity.x = buildConnectivityAxis(comp, boundary, phaseArea, 'x');
@@ -704,7 +1002,7 @@ function dist = buildHistogramDistribution(x, nBins)
     dist.cdfProbability = cdfProbability;
 end
 
-function out = buildPositionDistribution(position, sizeValue, nBins)
+function out = buildPositionDistribution(position, sizeValue, nBins, coordRange, axisStep)
     position = position(:);
     sizeValue = sizeValue(:);
     valid = isfinite(position) & isfinite(sizeValue) & (sizeValue > 0);
@@ -716,16 +1014,36 @@ function out = buildPositionDistribution(position, sizeValue, nBins)
         return;
     end
 
-    nBins = max(1, round(nBins));
-    xmin = min(position);
-    xmax = max(position);
-    if xmin == xmax
-        edges = [xmin - 0.5, xmax + 0.5];
-    else
-        edges = linspace(xmin, xmax, nBins + 1);
+    if ~isempty(coordRange)
+        inRange = (position >= coordRange(1)) & (position <= coordRange(2));
+        position = position(inRange);
+        sizeValue = sizeValue(inRange);
+        if isempty(position)
+            out.edges = buildAxisEdges(coordRange, coordRange(1), coordRange(2), axisStep, nBins);
+            out.centers = 0.5 * (out.edges(1:end-1) + out.edges(2:end));
+            out.meanEquivDiameter = nan(size(out.centers));
+            out.count = zeros(size(out.centers));
+            return;
+        end
     end
 
-    binId = discretize(position, edges);
+    nBins = max(1, round(nBins));
+    if isempty(coordRange)
+        xmin = min(position);
+        xmax = max(position);
+        if xmin == xmax
+            edges = [xmin - 0.5 * axisStep, xmax + 0.5 * axisStep];
+        else
+            edges = linspace(xmin, xmax, nBins + 1);
+        end
+    else
+        edges = buildAxisEdges(coordRange, coordRange(1), coordRange(2), axisStep, nBins);
+    end
+
+    binId = nan(size(position));
+    for i = 1:numel(position)
+        binId(i) = locateBin(position(i), edges);
+    end
     centers = 0.5 * (edges(1:end-1) + edges(2:end));
     meanSize = nan(size(centers));
     count = zeros(size(centers));
@@ -882,12 +1200,56 @@ function fig = plotPositionDistribution(dist, phaseName, axisName)
     set(ax, 'GridAlpha', 0.16, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
 end
 
+function fig = plotDirectionalProfile(profile, timestep)
+    fig = figure('Color', 'w', 'Name', ['Directional Profile ', upper(profile.axis)]);
+
+    ax1 = subplot(3, 1, 1, 'Parent', fig);
+    plot(ax1, profile.centers, profile.porosity, 'o-', ...
+        'LineWidth', 1.5, 'Color', [0.10 0.42 0.78], ...
+        'MarkerSize', 5, 'MarkerFaceColor', [0.10 0.42 0.78]);
+    ylabel(ax1, 'Porosity', 'FontName', 'Times New Roman', 'FontSize', 12);
+    title(ax1, sprintf('Pore-structure profile along %s @ timestep %g', profile.axis, timestep), ...
+        'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
+    styleProfileAxis(ax1);
+
+    ax2 = subplot(3, 1, 2, 'Parent', fig);
+    plot(ax2, profile.centers, profile.specificInterfaceBulk, 's-', ...
+        'LineWidth', 1.5, 'Color', [0.85 0.38 0.08], ...
+        'MarkerSize', 5, 'MarkerFaceColor', [0.85 0.38 0.08]);
+    ylabel(ax2, 'Specific Interface', 'FontName', 'Times New Roman', 'FontSize', 12);
+    styleProfileAxis(ax2);
+
+    ax3 = subplot(3, 1, 3, 'Parent', fig);
+    yyaxis(ax3, 'left');
+    plot(ax3, profile.centers, profile.connectivityFraction, '^-', ...
+        'LineWidth', 1.5, 'Color', [0.15 0.55 0.20], ...
+        'MarkerSize', 5, 'MarkerFaceColor', [0.15 0.55 0.20]);
+    ylabel(ax3, 'Conn. Fraction', 'FontName', 'Times New Roman', 'FontSize', 12);
+    ylim(ax3, [0 1]);
+    yyaxis(ax3, 'right');
+    stairs(ax3, profile.centers, double(profile.connectivityFlag), '--', ...
+        'LineWidth', 1.4, 'Color', [0.55 0.10 0.10]);
+    ylabel(ax3, 'Connected (0/1)', 'FontName', 'Times New Roman', 'FontSize', 12);
+    ylim(ax3, [0 1]);
+    xlabel(ax3, profile.axis, 'FontName', 'Times New Roman', 'FontSize', 13);
+    legend(ax3, {'Connected area fraction', 'Perp. connected flag'}, 'Location', 'best');
+    styleProfileAxis(ax3);
+end
+
+function styleProfileAxis(ax)
+    grid(ax, 'on');
+    box(ax, 'on');
+    set(ax, 'GridAlpha', 0.16, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
+end
+
 function plots = emptyPlotsStruct()
     plots = struct( ...
         'phaseFig', [], ...
         'poreLabelFig', [], ...
         'matrixLabelFig', [], ...
         'connectivityFig', [], ...
+        'profileFigX', [], ...
+        'profileFigY', [], ...
         'poreCountFig', [], ...
         'poreProbFig', [], ...
         'poreCdfFig', [], ...
@@ -924,11 +1286,17 @@ function comp = emptyComponentStats()
 end
 
 function [nr, nc, hasNeighbor, seamX, seamY] = neighborAt(r, c, dirId, ny, nx, boundary)
+    [nr, nc, hasNeighbor, shiftX, shiftY] = neighborAtWithShift(r, c, dirId, ny, nx, boundary);
+    seamX = (shiftX ~= 0);
+    seamY = (shiftY ~= 0);
+end
+
+function [nr, nc, hasNeighbor, shiftX, shiftY] = neighborAtWithShift(r, c, dirId, ny, nx, boundary)
     nr = r;
     nc = c;
     hasNeighbor = true;
-    seamX = false;
-    seamY = false;
+    shiftX = 0;
+    shiftY = 0;
 
     switch dirId
         case 1
@@ -936,7 +1304,7 @@ function [nr, nc, hasNeighbor, seamX, seamY] = neighborAt(r, c, dirId, ny, nx, b
             if nc < 1
                 if hasPeriodicX(boundary)
                     nc = nx;
-                    seamX = true;
+                    shiftX = -1;
                 else
                     hasNeighbor = false;
                 end
@@ -946,7 +1314,7 @@ function [nr, nc, hasNeighbor, seamX, seamY] = neighborAt(r, c, dirId, ny, nx, b
             if nc > nx
                 if hasPeriodicX(boundary)
                     nc = 1;
-                    seamX = true;
+                    shiftX = 1;
                 else
                     hasNeighbor = false;
                 end
@@ -956,7 +1324,7 @@ function [nr, nc, hasNeighbor, seamX, seamY] = neighborAt(r, c, dirId, ny, nx, b
             if nr < 1
                 if hasPeriodicY(boundary)
                     nr = ny;
-                    seamY = true;
+                    shiftY = -1;
                 else
                     hasNeighbor = false;
                 end
@@ -966,7 +1334,7 @@ function [nr, nc, hasNeighbor, seamX, seamY] = neighborAt(r, c, dirId, ny, nx, b
             if nr > ny
                 if hasPeriodicY(boundary)
                     nr = 1;
-                    seamY = true;
+                    shiftY = 1;
                 else
                     hasNeighbor = false;
                 end
