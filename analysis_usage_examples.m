@@ -52,23 +52,31 @@
 %   - 'ThresholdN'   : pore criterion, pore if Ncount < ThresholdN
 %   Useful optional:
 %   - 'Boundary'     : 'open' | 'periodic-x' | 'periodic-y' | 'periodic-xy'
+%   - 'MeanPowerM/N' : generalized mean definition sum(d^m)/sum(d^n)
 %   - 'PositionAxis' : axis for mean-size-vs-position distributions
 %   - 'PositionRangeX/Y' : scaled centroid-coordinate ranges for position distributions
 %   - 'ProfileAxis'  : axis for porosity/interface/connectivity profiles
 %   - 'ProfileRangeX/Y' : scaled coordinate ranges for directional profiles
 %   - 'ProfileNumBins'  : number of bins for the directional profiles
+%   - 'EnableSkeletonGraph' : compute skeleton metrics when toolbox is available
+%   - 'EnableEvolution' : additionally scan a timestep/index/time range
+%   - 'EvolutionSelectBy' : 'Index' | 'TimeStep' | 'Time'
+%   - 'EvolutionRange' : [min max] range on the selected evolution axis
+%   - 'EvolutionStride' : keep every Nth step in the evolution scan
 %   - 'MakePlots'    : true/false
 %
 % Note:
 %   Under periodic boundaries, "merged across the seam" and "truly connected
 %   along that direction" are not identical. connectivity.x / connectivity.y
-%   use the wrapped-domain winding test, while profile connectivity is assigned
-%   by the centroid of each globally connected pore component.
+%   use the wrapped-domain winding test, while topology.beta1 is computed on
+%   the wrapped 4-neighbor digital cell complex and therefore includes both
+%   ordinary enclosed holes and periodic wrapping loops. Profile connectivity
+%   is assigned by the centroid of each globally connected pore component.
 %
 % =============================================================
 % Quick setup
 % =============================================================
-baseDir = 'C:\path\to\your\case';
+baseDir = 'C:\Users\Administrator\Desktop\WORKSPACE\codex\POST_DATA\selftest_generated';
 chunkBaseDir = baseDir;
 clusterBaseDir = baseDir;
 vxBaseDir = baseDir;
@@ -219,6 +227,8 @@ if runNetwork2d
         'CoordScale', coordScale, ...
         'NetworkOptions', {'ThresholdN', 1, ...
                            'Boundary', 'open', ...
+                           'MeanPowerM', 1, ...
+                           'MeanPowerN', 0, ...
                            'PositionAxis', 'both', ...
                            'PositionRangeX', [], ...
                            'PositionRangeY', [], ...
@@ -226,7 +236,27 @@ if runNetwork2d
                            'ProfileRangeX', [], ...
                            'ProfileRangeY', [], ...
                            'ProfileNumBins', 24, ...
+                           'EnableSkeletonGraph', true, ...
+                           'EnableEvolution', false, ...
+                           'EvolutionSelectBy', selectBy, ...
+                           'EvolutionRange', [], ...
+                           'EvolutionStride', 1, ...
                            'MakePlots', true});
+
+    % Paper-ready snapshot metrics:
+    % out_network2d.stats.topology.pore.beta0 / beta1 / chi
+    % out_network2d.stats.connectivity.pore.largestFraction / percolatesX / percolatesY
+    % out_network2d.stats.geometry.phi / interfaceLength / specificInterface
+    % out_network2d.stats.size.pore.area / radius / diameter / hist
+    % out_network2d.stats.network.pore.skeletonLength / branchPoints / endPoints
+    % out_network2d.stats.thickness.matrix.min / mean / p1 / p5
+    % out_network2d.stats.fragmentation.matrix.count / largestFraction
+    %
+    % Optional evolution scan:
+    % out_network2d.stats.evolution.geometry.phi
+    % out_network2d.stats.evolution.topology.pore.beta0
+    % out_network2d.stats.evolution.topology.pore.beta1
+    % out_network2d.stats.evolution.connectivity.pore.largestFraction
 end
 
 % =============================================================

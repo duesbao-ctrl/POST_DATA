@@ -9,6 +9,8 @@ function out = read_chunk_step_fast(filePath, varargin)
 %   Build/reuse a lightweight index of block header positions, then seek to
 %   target block and read only one block instead of the whole file.
 
+    hasExplicitSelectBy = hasExplicitNameValue(varargin, 'SelectBy');
+
     p = inputParser;
     p.addRequired('filePath', @isTextScalar);
     p.addParameter('SelectBy', 'Index', @isTextScalar);      % Index | TimeStep | Time
@@ -38,7 +40,7 @@ function out = read_chunk_step_fast(filePath, varargin)
     mode = lower(strtrim(opt.SelectBy));
     % Backward compatibility: infer mode when SelectBy keeps default but
     % caller passes only Time or TimeStep.
-    if strcmp(mode, 'index')
+    if ~hasExplicitSelectBy && strcmp(mode, 'index')
         if ~isempty(opt.Time)
             mode = 'time';
         elseif ~isempty(opt.TimeStep) && isempty(opt.Index)
@@ -336,6 +338,24 @@ function s = toChar(v)
         s = char(v);
     else
         s = v;
+    end
+end
+
+function tf = hasExplicitNameValue(args, name)
+    tf = false;
+    if isempty(args)
+        return;
+    end
+
+    for i = 1:2:numel(args)
+        key = args{i};
+        if ~(ischar(key) || (isstring(key) && isscalar(key)))
+            continue;
+        end
+        if strcmpi(char(key), name)
+            tf = true;
+            return;
+        end
     end
 end
 
