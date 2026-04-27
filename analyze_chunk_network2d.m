@@ -1776,7 +1776,7 @@ function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN
     box(ax, 'on');
     set(ax, 'GridAlpha', 0.12, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
     colormap(ax, [0.75 0.75 0.75; 0.20 0.45 0.80; 0.88 0.52 0.22]);
-    clim(ax, [-1 1]);
+    setAxesCLim(ax, [-1 1]);
     cb = colorbar(ax, 'Ticks', [-1, 0, 1], 'TickLabels', {'Invalid', 'Matrix', 'Pore'});
     ylabel(cb, 'Phase');
     xlabel(ax, 'x', 'FontName', 'Times New Roman', 'FontSize', 13);
@@ -1851,7 +1851,7 @@ function drawConnectivityPanel(xCenters, yCenters, validMask, phaseMask, labelGr
     grid(ax, 'on');
     set(ax, 'GridAlpha', 0.10, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 11);
     colormap(ax, [1.00 1.00 1.00; 0.77 0.84 0.93; 0.88 0.42 0.05]);
-    clim(ax, [0 2]);
+    setAxesCLim(ax, [0 2]);
     xlabel(ax, 'x', 'FontName', 'Times New Roman', 'FontSize', 12);
     ylabel(ax, 'y', 'FontName', 'Times New Roman', 'FontSize', 12);
     title(ax, ttl, 'FontName', 'Times New Roman', 'FontSize', 13, 'FontWeight', 'bold');
@@ -2173,6 +2173,22 @@ function y = zeroIfNaN(x)
     else
         y = x;
     end
+end
+
+function setAxesCLim(ax, limits)
+    if nargin < 2 || isempty(limits)
+        return;
+    end
+
+    if hasFunctionCompat('clim')
+        clim(ax, limits);
+    else
+        caxis(ax, limits);
+    end
+end
+
+function tf = hasFunctionCompat(name)
+    tf = (exist(name, 'file') ~= 0) || (exist(name, 'builtin') ~= 0);
 end
 
 function tf = isTextScalar(v)

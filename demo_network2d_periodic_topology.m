@@ -44,15 +44,19 @@ function out = demo_network2d_periodic_topology()
                            'MakePlots', false});
 
     save(fullfile(outputDir, 'network2d_periodic_complex_demo_results.mat'), 'out');
-    writeTextFile(fullfile(outputDir, 'network2d_periodic_complex_demo_stats.json'), ...
-        jsonencode(out.stats, 'PrettyPrint', true));
-    writeTextFile(fullfile(outputDir, 'network2d_periodic_complex_demo_stats.txt'), ...
+    statsJsonInfo = writeStatsJsonCompat(outputDir, out.stats);
+    statsTxtPath = fullfile(outputDir, 'network2d_periodic_complex_demo_stats.txt');
+    writeTextFile(statsTxtPath, ...
         evalc('disp(out.stats)'));
-    writeTextFile(fullfile(outputDir, 'network2d_periodic_complex_demo_summary.txt'), ...
-        buildSummaryText(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN));
-    savePhasePreview(fullfile(outputDir, 'network2d_periodic_complex_demo_phase.png'), poreMask);
+    summaryPath = fullfile(outputDir, 'network2d_periodic_complex_demo_summary.txt');
+    phasePath = fullfile(outputDir, 'network2d_periodic_complex_demo_phase.png');
+    writeTextFile(summaryPath, ...
+        buildSummaryText(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN, ...
+            statsJsonInfo, statsTxtPath, summaryPath, phasePath));
+    savePhasePreview(phasePath, poreMask);
 
-    printSummaryLines(buildConsoleSummary(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN));
+    printSummaryLines(buildConsoleSummary(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN, ...
+        statsJsonInfo, statsTxtPath, summaryPath, phasePath));
 end
 
 function field = buildPeriodicField(xGrid, yGrid)
@@ -104,7 +108,7 @@ function savePhasePreview(filePath, poreMask)
     title('Periodic-XY Complex Pore Network');
     xlabel('x cell index');
     ylabel('y cell index');
-    exportgraphics(fig, filePath, 'Resolution', 200);
+    saveFigurePngCompat(fig, filePath, 200);
     close(fig);
 end
 
@@ -118,12 +122,52 @@ function writeTextFile(filePath, textContent)
     fwrite(fid, textContent, 'char');
 end
 
-function textOut = buildSummaryText(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN)
-    lines = buildConsoleSummary(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN);
+function info = writeStatsJsonCompat(outputDir, stats)
+    info = struct('path', '', 'isJson', false, 'note', '');
+    if hasFunctionCompat('jsonencode')
+        filePath = fullfile(outputDir, 'network2d_periodic_complex_demo_stats.json');
+        try
+            textContent = jsonencode(stats, 'PrettyPrint', true);
+        catch
+            textContent = jsonencode(stats);
+        end
+        info.path = filePath;
+        info.isJson = true;
+        info.note = 'Standard JSON output.';
+    else
+        filePath = fullfile(outputDir, 'network2d_periodic_complex_demo_stats_compat.txt');
+        textContent = ['jsonencode is unavailable in this MATLAB version.', newline, ...
+            'Falling back to plain-text struct display below.', newline, newline, ...
+            evalc('disp(stats)')];
+        info.path = filePath;
+        info.isJson = false;
+        info.note = 'jsonencode unavailable; wrote plain-text compatibility file instead.';
+    end
+    writeTextFile(filePath, textContent);
+end
+
+function saveFigurePngCompat(fig, filePath, resolution)
+    if nargin < 3 || isempty(resolution)
+        resolution = 200;
+    end
+
+    if hasFunctionCompat('exportgraphics')
+        exportgraphics(fig, filePath, 'Resolution', resolution);
+    else
+        set(fig, 'PaperPositionMode', 'auto');
+        print(fig, filePath, '-dpng', ['-r', num2str(resolution)]);
+    end
+end
+
+function textOut = buildSummaryText(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN, ...
+        statsJsonInfo, statsTxtPath, summaryPath, phasePath)
+    lines = buildConsoleSummary(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN, ...
+        statsJsonInfo, statsTxtPath, summaryPath, phasePath);
     textOut = strjoin(lines, newline);
 end
 
-function lines = buildConsoleSummary(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN)
+function lines = buildConsoleSummary(out, chunkFile, outputDir, generationFieldThreshold, analysisThresholdN, ...
+        statsJsonInfo, statsTxtPath, summaryPath, phasePath)
     lines = {
         'network2d periodic topology demo'
         ['chunkFile: ', chunkFile]
@@ -152,10 +196,12 @@ function lines = buildConsoleSummary(out, chunkFile, outputDir, generationFieldT
             out.stats.thickness.matrix.min, out.stats.thickness.matrix.p5, out.stats.thickness.matrix.mean)]
         ['matrix fragmentation count/largestFraction: ', sprintf('%g / %.6f', ...
             out.stats.fragmentation.matrix.count, out.stats.fragmentation.matrix.largestFraction)]
-        ['statsJson: ', fullfile(outputDir, 'network2d_periodic_complex_demo_stats.json')]
-        ['statsTxt: ', fullfile(outputDir, 'network2d_periodic_complex_demo_stats.txt')]
+        ['statsCompat: ', statsJsonInfo.path]
+        ['statsCompatNote: ', statsJsonInfo.note]
+        ['statsTxt: ', statsTxtPath]
+        ['summaryTxt: ', summaryPath]
         ['resultsMat: ', fullfile(outputDir, 'network2d_periodic_complex_demo_results.mat')]
-        ['phasePng: ', fullfile(outputDir, 'network2d_periodic_complex_demo_phase.png')]
+        ['phasePng: ', phasePath]
         };
 end
 
@@ -163,4 +209,8 @@ function printSummaryLines(lines)
     for i = 1:numel(lines)
         fprintf('%s\n', lines{i});
     end
+end
+
+function tf = hasFunctionCompat(name)
+    tf = (exist(name, 'file') ~= 0) || (exist(name, 'builtin') ~= 0);
 end
