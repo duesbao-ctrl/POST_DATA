@@ -252,6 +252,16 @@ connectivity are not the same thing. A component may merge across a periodic
 seam without being directionally connected; `wrapsX` / `wrapsY` still require a
 true non-zero winding around the periodic domain.
 
+Coordinate ranges in `network2d` are intentionally split by purpose:
+
+- `PositionRangeX/Y` filters only the mean-size-vs-position statistics
+- `ProfileRangeX/Y` filters only the directional profile curves
+- `PlotRangeX/Y` crops only the 2D phase/label/connectivity figures
+
+This means changing `PositionRange*` or `ProfileRange*` will not zoom the 2D
+phase map. Use `PlotRangeX/Y` when you want the displayed x/y limits of the
+2D network figures to change.
+
 ## Quick start
 
 1. Open MATLAB in this repository root.

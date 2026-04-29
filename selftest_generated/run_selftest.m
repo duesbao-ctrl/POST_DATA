@@ -634,6 +634,45 @@ assertTrue(ishandle(outNetworkPlot.plots.matrixPositionFigX), ...
 assertTrue(ishandle(outNetworkPlot.plots.matrixPositionFigY), ...
     'matrixPositionFigY should be returned when PositionAxis includes y.');
 closeHandles(collectPlotHandles(outNetworkPlot.plots));
+
+plotRangeX = [0.5 1.5];
+plotRangeY = [0.25 1.75];
+outNetworkPlotRange = analyze_chunk_network2d(ringPath, ...
+    'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off', ...
+    'ThresholdN', 1, 'MakePlots', true, ...
+    'PlotRangeX', plotRangeX, 'PlotRangeY', plotRangeY);
+assertArrayApprox(outNetworkPlotRange.plotRange.x(:), plotRangeX(:), 1e-12, ...
+    'plotRange.x should record the requested x cropping range.');
+assertArrayApprox(outNetworkPlotRange.plotRange.y(:), plotRangeY(:), 1e-12, ...
+    'plotRange.y should record the requested y cropping range.');
+
+phaseAxes = getFigureDataAxes(outNetworkPlotRange.plots.phaseFig);
+assertTrue(numel(phaseAxes) == 1, ...
+    'phaseFig should expose one main plotting axis after removing the colorbar axis.');
+assertArrayApprox(get(phaseAxes(1), 'XLim'), plotRangeX, 1e-12, ...
+    'PlotRangeX should crop the 2D phase figure.');
+assertArrayApprox(get(phaseAxes(1), 'YLim'), plotRangeY, 1e-12, ...
+    'PlotRangeY should crop the 2D phase figure.');
+
+labelAxes = getFigureDataAxes(outNetworkPlotRange.plots.poreLabelFig);
+assertTrue(numel(labelAxes) == 1, ...
+    'poreLabelFig should expose one main plotting axis after removing the colorbar axis.');
+assertArrayApprox(get(labelAxes(1), 'XLim'), plotRangeX, 1e-12, ...
+    'PlotRangeX should crop the pore label figure.');
+assertArrayApprox(get(labelAxes(1), 'YLim'), plotRangeY, 1e-12, ...
+    'PlotRangeY should crop the pore label figure.');
+
+connectivityAxes = getFigureDataAxes(outNetworkPlotRange.plots.connectivityFig);
+assertTrue(numel(connectivityAxes) == 4, ...
+    'connectivityFig should expose four subplot axes.');
+for iAx = 1:numel(connectivityAxes)
+    assertArrayApprox(get(connectivityAxes(iAx), 'XLim'), plotRangeX, 1e-12, ...
+        'PlotRangeX should crop every connectivity subplot.');
+    assertArrayApprox(get(connectivityAxes(iAx), 'YLim'), plotRangeY, 1e-12, ...
+        'PlotRangeY should crop every connectivity subplot.');
+end
+closeHandles(collectPlotHandles(outNetworkPlotRange.plots));
+
 fprintf('RUN_NETWORK2D|porosity=%.6f|interface=%.6f|poreComponents=%d|matrixHoleCount=%d\n', ...
     outNetwork.global.porosity, outNetwork.global.interfaceLength, ...
     outNetwork.pore.numComponents, outNetwork.matrix.holeCount);
@@ -806,6 +845,16 @@ for i = 1:numel(names)
     end
     handles = [handles; h(:)]; %#ok<AGROW>
 end
+end
+
+function axesHandles = getFigureDataAxes(fig)
+axesHandles = findall(fig, 'Type', 'axes');
+keep = true(size(axesHandles));
+for i = 1:numel(axesHandles)
+    tag = get(axesHandles(i), 'Tag');
+    keep(i) = ~strcmp(tag, 'Colorbar');
+end
+axesHandles = axesHandles(keep);
 end
 
 function closeHandles(handles)

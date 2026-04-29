@@ -29,6 +29,8 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     p.addParameter('PositionNumBins', 20, @isnumeric);
     p.addParameter('PositionRangeX', [], @isnumeric);
     p.addParameter('PositionRangeY', [], @isnumeric);
+    p.addParameter('PlotRangeX', [], @isnumeric);
+    p.addParameter('PlotRangeY', [], @isnumeric);
     p.addParameter('ProfileAxis', 'x', @isTextScalar);
     p.addParameter('ProfileNumBins', 20, @isnumeric);
     p.addParameter('ProfileRangeX', [], @isnumeric);
@@ -114,13 +116,14 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
 
     plots = emptyPlotsStruct();
     if opt.MakePlots
-        plots.phaseFig = plotPhaseGrid(xCenters, yCenters, phaseGrid, step.timestep, opt.ThresholdN);
+        plots.phaseFig = plotPhaseGrid(xCenters, yCenters, phaseGrid, step.timestep, ...
+            opt.ThresholdN, opt.PlotRangeX, opt.PlotRangeY);
         plots.poreLabelFig = plotLabelGrid(xCenters, yCenters, pore.labelGrid, validMask, ...
-            sprintf('Pore Labels @ timestep %g', step.timestep));
+            sprintf('Pore Labels @ timestep %g', step.timestep), opt.PlotRangeX, opt.PlotRangeY);
         plots.matrixLabelFig = plotLabelGrid(xCenters, yCenters, matrix.labelGrid, validMask, ...
-            sprintf('Matrix Labels @ timestep %g', step.timestep));
+            sprintf('Matrix Labels @ timestep %g', step.timestep), opt.PlotRangeX, opt.PlotRangeY);
         plots.connectivityFig = plotConnectivityHighlights(xCenters, yCenters, validMask, ...
-            pore, matrix, step.timestep);
+            pore, matrix, step.timestep, opt.PlotRangeX, opt.PlotRangeY);
 
         plots.poreCountFig = plotCountDistribution(pore.equivDiameterDistribution, 'Pore');
         plots.matrixCountFig = plotCountDistribution(matrix.equivDiameterDistribution, 'Matrix');
@@ -175,6 +178,7 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     out.coordScale = opt.CoordScale;
     out.ncountVar = opt.NcountVar;
     out.positionRange = struct('x', opt.PositionRangeX, 'y', opt.PositionRangeY);
+    out.plotRange = struct('x', opt.PlotRangeX, 'y', opt.PlotRangeY);
     out.profileRange = struct('x', opt.ProfileRangeX, 'y', opt.ProfileRangeY);
     out.xCenters = xCenters;
     out.yCenters = yCenters;
@@ -248,6 +252,8 @@ function validateInputs(opt)
     validatePositiveScalarOrEmpty(opt.Dy, 'Dy');
     validateRangeOrEmpty(opt.PositionRangeX, 'PositionRangeX');
     validateRangeOrEmpty(opt.PositionRangeY, 'PositionRangeY');
+    validateRangeOrEmpty(opt.PlotRangeX, 'PlotRangeX');
+    validateRangeOrEmpty(opt.PlotRangeY, 'PlotRangeY');
     validateRangeOrEmpty(opt.ProfileRangeX, 'ProfileRangeX');
     validateRangeOrEmpty(opt.ProfileRangeY, 'ProfileRangeY');
     validateRangeOrEmpty(opt.EvolutionRange, 'EvolutionRange');
@@ -1765,13 +1771,14 @@ function out = emptyEvolutionStats()
         'matrix', struct('deltaBeta0', [], 'deltaBeta1', [], 'deltaLargestFraction', []));
 end
 
-function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN)
+function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN, xRange, yRange)
     fig = figure('Color', 'w', 'Name', '2D Network Phase Map');
     ax = axes('Parent', fig);
     imagesc(ax, xCenters, yCenters, phaseGrid);
     set(ax, 'YDir', 'normal');
     axis(ax, 'equal');
     axis(ax, 'tight');
+    applyPlotRanges(ax, xCenters, yCenters, xRange, yRange);
     grid(ax, 'on');
     box(ax, 'on');
     set(ax, 'GridAlpha', 0.12, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
@@ -1785,7 +1792,7 @@ function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN
         'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
-function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, ttl)
+function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, ttl, xRange, yRange)
     fig = figure('Color', 'w', 'Name', ttl);
     ax = axes('Parent', fig);
     z = labelGrid;
@@ -1794,6 +1801,7 @@ function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, ttl)
     set(ax, 'YDir', 'normal');
     axis(ax, 'equal');
     axis(ax, 'tight');
+    applyPlotRanges(ax, xCenters, yCenters, xRange, yRange);
     grid(ax, 'on');
     box(ax, 'on');
     set(ax, 'GridAlpha', 0.12, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
@@ -1806,24 +1814,24 @@ function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, ttl)
     title(ax, ttl, 'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
-function fig = plotConnectivityHighlights(xCenters, yCenters, validMask, pore, matrix, timestep)
+function fig = plotConnectivityHighlights(xCenters, yCenters, validMask, pore, matrix, timestep, xRange, yRange)
     fig = figure('Color', 'w', 'Name', 'Directional Connectivity Highlights');
 
     subplot(2, 2, 1);
     drawConnectivityPanel(xCenters, yCenters, validMask, pore.mask, pore.labelGrid, ...
-        pore.connectivity.x.componentIds, 'Pore connected in x');
+        pore.connectivity.x.componentIds, 'Pore connected in x', xRange, yRange);
 
     subplot(2, 2, 2);
     drawConnectivityPanel(xCenters, yCenters, validMask, pore.mask, pore.labelGrid, ...
-        pore.connectivity.y.componentIds, 'Pore connected in y');
+        pore.connectivity.y.componentIds, 'Pore connected in y', xRange, yRange);
 
     subplot(2, 2, 3);
     drawConnectivityPanel(xCenters, yCenters, validMask, matrix.mask, matrix.labelGrid, ...
-        matrix.connectivity.x.componentIds, 'Matrix connected in x');
+        matrix.connectivity.x.componentIds, 'Matrix connected in x', xRange, yRange);
 
     subplot(2, 2, 4);
     drawConnectivityPanel(xCenters, yCenters, validMask, matrix.mask, matrix.labelGrid, ...
-        matrix.connectivity.y.componentIds, 'Matrix connected in y');
+        matrix.connectivity.y.componentIds, 'Matrix connected in y', xRange, yRange);
 
     annotation(fig, 'textbox', [0.28 0.95 0.44 0.04], 'String', ...
         sprintf('Directional connectivity highlights @ timestep %g', timestep), ...
@@ -1831,7 +1839,7 @@ function fig = plotConnectivityHighlights(xCenters, yCenters, validMask, pore, m
         'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
-function drawConnectivityPanel(xCenters, yCenters, validMask, phaseMask, labelGrid, componentIds, ttl)
+function drawConnectivityPanel(xCenters, yCenters, validMask, phaseMask, labelGrid, componentIds, ttl, xRange, yRange)
     ax = gca;
     highlightMask = false(size(labelGrid));
     if ~isempty(componentIds)
@@ -1847,6 +1855,7 @@ function drawConnectivityPanel(xCenters, yCenters, validMask, phaseMask, labelGr
     set(ax, 'YDir', 'normal');
     axis(ax, 'equal');
     axis(ax, 'tight');
+    applyPlotRanges(ax, xCenters, yCenters, xRange, yRange);
     box(ax, 'on');
     grid(ax, 'on');
     set(ax, 'GridAlpha', 0.10, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 11);
@@ -1857,11 +1866,45 @@ function drawConnectivityPanel(xCenters, yCenters, validMask, phaseMask, labelGr
     title(ax, ttl, 'FontName', 'Times New Roman', 'FontSize', 13, 'FontWeight', 'bold');
 
     if ~any(highlightMask(:))
-        text(ax, mean(xCenters), mean(yCenters), 'No connected component', ...
+        xLimNow = get(ax, 'XLim');
+        yLimNow = get(ax, 'YLim');
+        text(ax, mean(xLimNow), mean(yLimNow), 'No connected component', ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
             'Color', [0.25 0.25 0.25], 'FontName', 'Times New Roman', ...
             'FontSize', 11, 'FontWeight', 'bold', 'BackgroundColor', [1 1 1]);
     end
+end
+
+function applyPlotRanges(ax, xCenters, yCenters, xRange, yRange)
+    if ~isempty(xRange)
+        xlim(ax, normalizePlotRange(xRange, xCenters));
+    end
+    if ~isempty(yRange)
+        ylim(ax, normalizePlotRange(yRange, yCenters));
+    end
+end
+
+function rangeOut = normalizePlotRange(rangeIn, centers)
+    rangeOut = double(rangeIn(:).');
+    if isempty(rangeOut) || (rangeOut(2) > rangeOut(1))
+        return;
+    end
+    padding = inferPlotPadding(centers);
+    rangeOut = [rangeOut(1) - padding, rangeOut(2) + padding];
+end
+
+function padding = inferPlotPadding(centers)
+    centers = double(centers(:));
+    centers = centers(isfinite(centers));
+    if numel(centers) >= 2
+        d = diff(sort(centers));
+        d = d(d > 0);
+        if ~isempty(d)
+            padding = 0.5 * min(d);
+            return;
+        end
+    end
+    padding = 0.5;
 end
 
 function fig = plotCountDistribution(dist, phaseName)
@@ -2179,16 +2222,7 @@ function setAxesCLim(ax, limits)
     if nargin < 2 || isempty(limits)
         return;
     end
-
-    if hasFunctionCompat('clim')
-        clim(ax, limits);
-    else
-        caxis(ax, limits);
-    end
-end
-
-function tf = hasFunctionCompat(name)
-    tf = (exist(name, 'file') ~= 0) || (exist(name, 'builtin') ~= 0);
+    set(ax, 'CLim', limits);
 end
 
 function tf = isTextScalar(v)
