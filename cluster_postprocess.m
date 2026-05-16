@@ -36,6 +36,8 @@ function result = cluster_postprocess(clusterPath, varargin)
     p.addParameter('MeanPowerM', 1, @isnumeric);
     p.addParameter('MeanPowerN', 0, @isnumeric);
     p.addParameter('HistNumBins', 30, @isnumeric);
+    p.addParameter('DiameterHistBinSize', [], @isnumeric);
+    p.addParameter('DiameterPlotRange', [], @isnumeric);
     p.addParameter('HistScale', 'linear', @isTextScalar);      % linear/semilogx/semilogy/loglog/log
 
     p.addParameter('MakePlots', true, @islogical);
@@ -50,6 +52,8 @@ function result = cluster_postprocess(clusterPath, varargin)
     opt.HistScale = toChar(opt.HistScale);
     validateMeanPower(opt.MeanPowerM, 'MeanPowerM');
     validateMeanPower(opt.MeanPowerN, 'MeanPowerN');
+    validatePositiveScalarOrEmpty(opt.DiameterHistBinSize, 'DiameterHistBinSize');
+    validateRangeOrEmpty(opt.DiameterPlotRange, 'DiameterPlotRange');
 
     meanDefinition = struct('m', opt.MeanPowerM, 'n', opt.MeanPowerN);
 
@@ -107,12 +111,14 @@ function result = cluster_postprocess(clusterPath, varargin)
         result.fit = [];
         result.meanDefinition = meanDefinition;
         result.meanByBin = struct('edges', [], 'centers', [], 'meanDiameter', [], 'count', []);
+        result.hist = emptyHistogramData();
         result.plots = emptyPlotsStruct();
         return;
     end
 
     stats = basicStats(diameter, opt.MeanPowerM, opt.MeanPowerN);
     fit = fitByMoments(diameter);
+    histData = buildHistogramData(diameter, opt.HistNumBins, opt.DiameterHistBinSize);
 
     xVarName = matlab.lang.makeValidName(opt.XVarForMean);
     meanBin = struct('edges', [], 'centers', [], 'meanDiameter', [], 'count', []);
@@ -127,11 +133,10 @@ function result = cluster_postprocess(clusterPath, varargin)
 
     plots = emptyPlotsStruct();
     if opt.MakePlots
-        histData = buildHistogramData(diameter, opt.HistNumBins);
-        plots.countFig = plotCountDistributionWithFits(histData, fit, opt.HistScale);
-        plots.probFig = plotProbabilityDistributionWithFits(histData, fit, opt.HistScale);
+        plots.countFig = plotCountDistributionWithFits(histData, fit, opt.HistScale, opt.DiameterPlotRange);
+        plots.probFig = plotProbabilityDistributionWithFits(histData, fit, opt.HistScale, opt.DiameterPlotRange);
         plots.histFig = plots.countFig; % Deprecated compatibility alias.
-        plots.cdfFig  = plotCDFBothDirections(diameter);
+        plots.cdfFig  = plotCDFBothDirections(diameter, opt.DiameterPlotRange);
         hasMeanData = any(~isnan(meanBin.meanDiameter) & (meanBin.count > 0));
         if hasMeanX && hasMeanData
             plots.meanFig = plotMeanByBin(meanBin, opt.XVarForMean);
@@ -158,6 +163,7 @@ function result = cluster_postprocess(clusterPath, varargin)
     result.fit = fit;
     result.meanDefinition = meanDefinition;
     result.meanByBin = meanBin;
+    result.hist = histData;
     result.plots = plots;
 end
 
@@ -288,8 +294,12 @@ function out = binMeanDiameter(x, d, nBins, meanPowerM, meanPowerN)
     out.count = cnt;
 end
 
-function histData = buildHistogramData(d, nBins)
-    [counts, edges] = histcounts(d, nBins);
+function histData = buildHistogramData(d, nBins, binSize)
+    if nargin < 3
+        binSize = [];
+    end
+    edges = buildHistogramEdgesFromData(d, nBins, binSize);
+    [counts, edges] = histcounts(d, edges);
     centers = 0.5 * (edges(1:end-1) + edges(2:end));
     widths = diff(edges);
     if isempty(widths)
@@ -316,7 +326,51 @@ function histData = buildHistogramData(d, nBins)
     histData.fitX = xg;
 end
 
-function fig = plotCountDistributionWithFits(histData, fit, histScale)
+function edges = buildHistogramEdgesFromData(x, nBins, binSize)
+    x = x(:);
+    x = x(isfinite(x) & (x > 0));
+    nBins = max(1, round(nBins));
+    xmin = min(x);
+    xmax = max(x);
+
+    if ~isempty(binSize)
+        binSize = double(binSize);
+        if xmin == xmax
+            edges = [xmin - 0.5 * binSize, xmin + 0.5 * binSize];
+            return;
+        end
+        edges = xmin:binSize:xmax;
+        if isempty(edges)
+            edges = [xmin, xmin + binSize];
+        elseif edges(end) < xmax
+            edges(end + 1) = edges(end) + binSize;
+        end
+        if numel(edges) < 2
+            edges = [xmin, xmin + binSize];
+        end
+        return;
+    end
+
+    if xmin == xmax
+        pad = max(1e-12, abs(xmin) * 1e-6);
+        edges = linspace(xmin - pad, xmax + pad, nBins + 1);
+    else
+        edges = linspace(xmin, xmax, nBins + 1);
+    end
+end
+
+function histData = emptyHistogramData()
+    histData = struct();
+    histData.counts = [];
+    histData.edges = [];
+    histData.centers = [];
+    histData.binWidth = [];
+    histData.totalCount = 0;
+    histData.prob = [];
+    histData.fitX = [];
+end
+
+function fig = plotCountDistributionWithFits(histData, fit, histScale, xRange)
     fig = figure('Name', 'Cluster Diameter Count Distribution');
 
     hBar = bar(histData.centers, histData.counts, 1.0, ...
@@ -336,10 +390,11 @@ function fig = plotCountDistributionWithFits(histData, fit, histScale)
         {'Count (hist)', 'Lognormal fit', 'Gamma fit'}, ...
         'Location', 'best');
     applyHistScale(histScale);
+    applyDistributionXRange(gca, xRange, histData.centers);
     grid on;
 end
 
-function fig = plotProbabilityDistributionWithFits(histData, fit, histScale)
+function fig = plotProbabilityDistributionWithFits(histData, fit, histScale, xRange)
     fig = figure('Name', 'Cluster Diameter Probability Distribution');
 
     hBar = bar(histData.centers, histData.prob, 1.0, ...
@@ -359,6 +414,7 @@ function fig = plotProbabilityDistributionWithFits(histData, fit, histScale)
         {'Probability (bin)', 'Lognormal fit', 'Gamma fit'}, ...
         'Location', 'best');
     applyHistScale(histScale);
+    applyDistributionXRange(gca, xRange, histData.centers);
     grid on;
 end
 
@@ -385,7 +441,7 @@ function applyHistScale(histScale)
     end
 end
 
-function fig = plotCDFBothDirections(d)
+function fig = plotCDFBothDirections(d, xRange)
     fig = figure('Name', 'Cluster Diameter CDF');
 
     xAsc = sort(d(:), 'ascend');
@@ -410,7 +466,36 @@ function fig = plotCDFBothDirections(d)
     xlabel('Equivalent Diameter');
     title('CDF (small to large / large to small)');
     legend({'Count asc', 'Count desc', 'Prob asc', 'Prob desc'}, 'Location', 'best');
+    applyDistributionXRange(gca, xRange, xAsc);
     grid on;
+end
+
+function applyDistributionXRange(ax, xRange, xFallback)
+    if isempty(xRange)
+        return;
+    end
+    xlim(ax, normalizePlotRange(xRange, xFallback));
+end
+
+function rangeOut = normalizePlotRange(rangeIn, values)
+    rangeOut = double(rangeIn(:).');
+    if isempty(rangeOut) || (rangeOut(2) > rangeOut(1))
+        return;
+    end
+    values = values(:);
+    values = values(isfinite(values));
+    if numel(values) >= 2
+        d = diff(sort(values));
+        d = d(d > 0);
+        if ~isempty(d)
+            pad = 0.5 * min(d);
+        else
+            pad = 0.5;
+        end
+    else
+        pad = 0.5;
+    end
+    rangeOut = [rangeOut(1) - pad, rangeOut(2) + pad];
 end
 
 function fig = plotMeanByBin(meanBin, xVarName)
@@ -447,6 +532,26 @@ function validateMeanPower(v, name)
     if ~(isnumeric(v) && isscalar(v) && isreal(v) && isfinite(v))
         error('cluster_postprocess:BadMeanPower', ...
             '%s must be a finite real scalar.', name);
+    end
+end
+
+function validatePositiveScalarOrEmpty(v, name)
+    if isempty(v)
+        return;
+    end
+    if ~(isnumeric(v) && isscalar(v) && isreal(v) && isfinite(v) && v > 0)
+        error('cluster_postprocess:BadHistogramBinSize', ...
+            '%s must be empty or a positive finite scalar.', name);
+    end
+end
+
+function validateRangeOrEmpty(v, name)
+    if isempty(v)
+        return;
+    end
+    if ~(isnumeric(v) && numel(v) == 2 && all(isfinite(v(:))) && v(2) >= v(1))
+        error('cluster_postprocess:BadRange', ...
+            '%s must be empty or a finite [min max] range with max >= min.', name);
     end
 end
 

@@ -37,6 +37,14 @@ display:
 - `analyze_chunk_network2d.m` reconstructs 2D pore/matrix networks from `Ncount`
 - `selftest_generated/run_selftest.m` provides a lightweight self-test using bundled fixtures
 
+## Cluster notes
+
+`taskType='cluster'` reports equivalent-diameter statistics and distribution
+plots. Use `HistNumBins` for the legacy fixed-number-of-bins behavior, or set
+`DiameterHistBinSize` to force a physical bin width. `DiameterPlotRange` only
+crops the x-axis of the diameter distribution plots; use `Range_diameter` when
+the data themselves should be filtered before statistics are computed.
+
 ## Network2d notes
 
 `taskType='network2d'` classifies each valid 2D chunk cell by `Ncount < ThresholdN`:
@@ -96,18 +104,19 @@ metrics for pore and matrix:
 - `specificInterface = interfaceLength / validArea`
 - `poreArea`, `matrixArea`, `matrixFraction`, `validArea`
 
-`out.stats.size` stores per-component size vectors and histogram data for both
-phases:
+`out.stats.size` stores per-component equivalent-diameter vectors and histogram
+data for both phases:
 
-- `area`
-- `radius = sqrt(area/pi)`
 - `diameter = 2 * sqrt(area/pi)`
-- `hist.area` and `hist.radius` with `edges / centers / count / pdf`
+- `hist.diameter` with `edges / centers / count / pdf`
 
-Average radius/diameter statistics use the generalized mean
+Average diameter statistics use the generalized mean
 `sum(d^m) / sum(d^n)` through `MeanPowerM` and `MeanPowerN` in
 `NetworkOptions`. The default `m=1, n=0` reduces to the arithmetic mean.
-Area-weighted means are reported separately as fixed physical quantities.
+The area-weighted mean diameter is reported separately as a fixed physical
+quantity. `DiameterHistBinSize` can be used to force a fixed histogram bin
+width; otherwise `HistNumBins` is used. The diameter count plots can be cropped
+with `DiameterPlotRange`.
 
 `out.stats.network` and `out.stats.thickness` provide optional higher-level
 descriptors when the Image Processing Toolbox is available:
@@ -246,6 +255,14 @@ component to a profile bin by its centroid. In each bin the module reports:
 - local porosity
 - local specific interface (bulk normalization)
 - centroid-assigned pore connectivity across the perpendicular direction
+
+`PositionAxis` and `ProfileAxis` answer different questions:
+
+- `PositionAxis` bins whole connected components by their centroids and reports
+  mean component size versus position.
+- `ProfileAxis` slices the domain spatially and reports local field-like
+  quantities such as porosity, interface density, and perpendicular
+  connectivity versus position.
 
 For periodic boundaries, note that topological loops and directional
 connectivity are not the same thing. A component may merge across a periodic

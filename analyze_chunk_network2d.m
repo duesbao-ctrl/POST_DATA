@@ -36,6 +36,8 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     p.addParameter('ProfileRangeX', [], @isnumeric);
     p.addParameter('ProfileRangeY', [], @isnumeric);
     p.addParameter('HistNumBins', 30, @isnumeric);
+    p.addParameter('DiameterHistBinSize', [], @isnumeric);
+    p.addParameter('DiameterPlotRange', [], @isnumeric);
     p.addParameter('MeanPowerM', 1, @isnumeric);
     p.addParameter('MeanPowerN', 0, @isnumeric);
     p.addParameter('EnableSkeletonGraph', false, @islogical);
@@ -119,14 +121,16 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
         plots.phaseFig = plotPhaseGrid(xCenters, yCenters, phaseGrid, step.timestep, ...
             opt.ThresholdN, opt.PlotRangeX, opt.PlotRangeY);
         plots.poreLabelFig = plotLabelGrid(xCenters, yCenters, pore.labelGrid, validMask, ...
-            sprintf('Pore Labels @ timestep %g', step.timestep), opt.PlotRangeX, opt.PlotRangeY);
+            pore.sizeRank, sprintf('Pore Labels @ timestep %g', step.timestep), ...
+            opt.PlotRangeX, opt.PlotRangeY);
         plots.matrixLabelFig = plotLabelGrid(xCenters, yCenters, matrix.labelGrid, validMask, ...
-            sprintf('Matrix Labels @ timestep %g', step.timestep), opt.PlotRangeX, opt.PlotRangeY);
+            matrix.sizeRank, sprintf('Matrix Labels @ timestep %g', step.timestep), ...
+            opt.PlotRangeX, opt.PlotRangeY);
         plots.connectivityFig = plotConnectivityHighlights(xCenters, yCenters, validMask, ...
             pore, matrix, step.timestep, opt.PlotRangeX, opt.PlotRangeY);
 
-        plots.poreCountFig = plotCountDistribution(pore.equivDiameterDistribution, 'Pore');
-        plots.matrixCountFig = plotCountDistribution(matrix.equivDiameterDistribution, 'Matrix');
+        plots.poreCountFig = plotCountDistribution(pore.equivDiameterDistribution, 'Pore', opt.DiameterPlotRange);
+        plots.matrixCountFig = plotCountDistribution(matrix.equivDiameterDistribution, 'Matrix', opt.DiameterPlotRange);
 
         if strcmp(opt.PositionAxis, 'x') || strcmp(opt.PositionAxis, 'both')
             plots.porePositionFigX = plotPositionDistribution(pore.positionDistribution.x, 'Pore', 'x');
@@ -250,10 +254,12 @@ function validateInputs(opt)
     end
     validatePositiveScalarOrEmpty(opt.Dx, 'Dx');
     validatePositiveScalarOrEmpty(opt.Dy, 'Dy');
+    validatePositiveScalarOrEmpty(opt.DiameterHistBinSize, 'DiameterHistBinSize');
     validateRangeOrEmpty(opt.PositionRangeX, 'PositionRangeX');
     validateRangeOrEmpty(opt.PositionRangeY, 'PositionRangeY');
     validateRangeOrEmpty(opt.PlotRangeX, 'PlotRangeX');
     validateRangeOrEmpty(opt.PlotRangeY, 'PlotRangeY');
+    validateRangeOrEmpty(opt.DiameterPlotRange, 'DiameterPlotRange');
     validateRangeOrEmpty(opt.ProfileRangeX, 'ProfileRangeX');
     validateRangeOrEmpty(opt.ProfileRangeY, 'ProfileRangeY');
     validateRangeOrEmpty(opt.EvolutionRange, 'EvolutionRange');
@@ -427,7 +433,8 @@ function phase = analyzePhase(name, phaseMask, validMask, xCenters, yCenters, dx
 
     areaStats = computeSummaryStats(comp.area);
     diamStats = computeSummaryStats(comp.equivDiameter, opt.MeanPowerM, opt.MeanPowerN);
-    equivDiameterDistribution = buildHistogramDistribution(comp.equivDiameter, round(opt.HistNumBins));
+    equivDiameterDistribution = buildHistogramDistribution(comp.equivDiameter, ...
+        round(opt.HistNumBins), opt.DiameterHistBinSize);
     positionDistribution = struct();
     positionDistribution.x = buildPositionDistribution(comp.centroidX, comp.equivDiameter, ...
         round(opt.PositionNumBins), opt.PositionRangeX, dx, opt.MeanPowerM, opt.MeanPowerN);
@@ -459,6 +466,7 @@ function phase = analyzePhase(name, phaseMask, validMask, xCenters, yCenters, dx
     phase.totalPerimeterOpen = sum(comp.perimeterOpen);
     phase.totalInterfacePerimeter = sum(comp.interfacePerimeter);
     phase.components = comp;
+    phase.sizeRank = buildComponentSizeRank(comp);
     phase.areaStats = areaStats;
     phase.equivDiameterStats = diamStats;
     phase.equivDiameterDistribution = equivDiameterDistribution;
@@ -627,6 +635,30 @@ function [perimeterOpen, interfacePerimeter] = computePerimeterForMask(component
             interfacePerimeter = interfacePerimeter + sideLength;
         end
     end
+end
+
+function rank = buildComponentSizeRank(comp)
+    labels = comp.label(:);
+    areas = comp.area(:);
+    cellCounts = comp.cellCount(:);
+
+    rank = struct();
+    rank.label = zeros(0, 1);
+    rank.area = zeros(0, 1);
+    rank.cellCount = zeros(0, 1);
+    rank.rank = zeros(0, 1);
+    rank.rankByLabel = zeros(0, 1);
+    if isempty(labels)
+        return;
+    end
+
+    [~, order] = sortrows([-areas, labels]);
+    rank.label = labels(order);
+    rank.area = areas(order);
+    rank.cellCount = cellCounts(order);
+    rank.rank = (1:numel(order)).';
+    rank.rankByLabel = zeros(max(labels), 1);
+    rank.rankByLabel(rank.label) = rank.rank;
 end
 
 function value = computePercolates(comp, axisName, boundary)
@@ -988,25 +1020,20 @@ function q = computeQuantiles(x, prob)
     end
 end
 
-function dist = buildHistogramDistribution(x, nBins)
+function dist = buildHistogramDistribution(x, nBins, binSize)
+    if nargin < 3
+        binSize = [];
+    end
     x = x(:);
     x = x(isfinite(x) & (x > 0));
     dist = struct('edges', [], 'centers', [], 'count', [], 'probability', [], ...
-        'cdfX', [], 'cdfCount', [], 'cdfProbability', []);
+        'cdfX', [], 'cdfCount', [], 'cdfProbability', [], 'binSize', []);
 
     if isempty(x)
         return;
     end
 
-    nBins = max(1, round(nBins));
-    xmin = min(x);
-    xmax = max(x);
-    if xmin == xmax
-        pad = max(1e-12, abs(xmin) * 1e-6);
-        edges = linspace(xmin - pad, xmax + pad, nBins + 1);
-    else
-        edges = linspace(xmin, xmax, nBins + 1);
-    end
+    edges = buildHistogramEdgesFromData(x, nBins, binSize);
 
     count = histcounts(x, edges);
     centers = 0.5 * (edges(1:end-1) + edges(2:end));
@@ -1023,6 +1050,38 @@ function dist = buildHistogramDistribution(x, nBins)
     dist.cdfX = xs;
     dist.cdfCount = cdfCount;
     dist.cdfProbability = cdfProbability;
+    dist.binSize = mean(diff(edges));
+end
+
+function edges = buildHistogramEdgesFromData(x, nBins, binSize)
+    nBins = max(1, round(nBins));
+    xmin = min(x);
+    xmax = max(x);
+
+    if ~isempty(binSize)
+        binSize = double(binSize);
+        if xmin == xmax
+            edges = [xmin - 0.5 * binSize, xmin + 0.5 * binSize];
+            return;
+        end
+        edges = xmin:binSize:xmax;
+        if isempty(edges)
+            edges = [xmin, xmin + binSize];
+        elseif edges(end) < xmax
+            edges(end + 1) = edges(end) + binSize;
+        end
+        if numel(edges) < 2
+            edges = [xmin, xmin + binSize];
+        end
+        return;
+    end
+
+    if xmin == xmax
+        pad = max(1e-12, abs(xmin) * 1e-6);
+        edges = linspace(xmin - pad, xmax + pad, nBins + 1);
+    else
+        edges = linspace(xmin, xmax, nBins + 1);
+    end
 end
 
 function out = buildPositionDistribution(position, sizeValue, nBins, coordRange, axisStep, meanPowerM, meanPowerN)
@@ -1300,24 +1359,15 @@ end
 function sizeStats = buildPhaseSizeStats(phase, opt)
     area = phase.components.area(:);
     diameter = phase.components.equivDiameter(:);
-    radius = 0.5 .* diameter;
 
     sizeStats = struct();
-    sizeStats.count = numel(area);
-    sizeStats.area = area;
-    sizeStats.radius = radius;
+    sizeStats.count = numel(diameter);
     sizeStats.diameter = diameter;
-    sizeStats.maxArea = zeroIfEmpty(maxOrNaN(area));
-    sizeStats.maxRadius = zeroIfEmpty(maxOrNaN(radius));
     sizeStats.maxDiameter = zeroIfEmpty(maxOrNaN(diameter));
-    sizeStats.meanArea = momentRatioMean(area, opt.MeanPowerM, opt.MeanPowerN);
-    sizeStats.meanRadius = momentRatioMean(radius, opt.MeanPowerM, opt.MeanPowerN);
     sizeStats.meanDiameter = momentRatioMean(diameter, opt.MeanPowerM, opt.MeanPowerN);
-    sizeStats.areaWeightedMeanRadius = weightedMean(radius, area);
     sizeStats.areaWeightedMeanDiameter = weightedMean(diameter, area);
     sizeStats.hist = struct( ...
-        'area', buildPdfHistogramData(area, round(opt.HistNumBins)), ...
-        'radius', buildPdfHistogramData(radius, round(opt.HistNumBins)));
+        'diameter', buildPdfHistogramData(diameter, round(opt.HistNumBins), opt.DiameterHistBinSize));
 end
 
 function value = maxOrNaN(x)
@@ -1349,23 +1399,19 @@ function meanVal = weightedMean(x, w)
     meanVal = sum(x .* w) / sum(w);
 end
 
-function histData = buildPdfHistogramData(x, nBins)
+function histData = buildPdfHistogramData(x, nBins, binSize)
+    if nargin < 3
+        binSize = [];
+    end
     x = x(:);
     x = x(isfinite(x) & (x > 0));
-    histData = struct('edges', [], 'centers', [], 'count', [], 'pdf', [], 'probability', []);
+    histData = struct('edges', [], 'centers', [], 'count', [], 'pdf', [], ...
+        'probability', [], 'binSize', []);
     if isempty(x)
         return;
     end
 
-    nBins = max(1, round(nBins));
-    xmin = min(x);
-    xmax = max(x);
-    if xmin == xmax
-        pad = max(1e-12, abs(xmin) * 1e-6);
-        edges = linspace(xmin - pad, xmax + pad, nBins + 1);
-    else
-        edges = linspace(xmin, xmax, nBins + 1);
-    end
+    edges = buildHistogramEdgesFromData(x, nBins, binSize);
     count = histcounts(x, edges);
     centers = 0.5 * (edges(1:end-1) + edges(2:end));
     widths = diff(edges);
@@ -1382,6 +1428,7 @@ function histData = buildPdfHistogramData(x, nBins)
     histData.count = count;
     histData.pdf = pdf;
     histData.probability = prob;
+    histData.binSize = mean(widths);
 end
 
 function net = buildPhaseSkeletonStats(phaseMask, phaseArea, dx, dy, boundary, enabled, toolbox)
@@ -1466,7 +1513,7 @@ function frag = buildFragmentationStats(matrix, matrixSize, matrixTopology)
     frag = struct();
     frag.count = matrixTopology.beta0;
     frag.largestFraction = zeroIfNaN(matrix.largestComponentFraction);
-    frag.sizeDist = matrixSize.hist.area;
+    frag.sizeDist = matrixSize.hist.diameter;
 end
 
 function toolbox = detectImageToolboxAvailability()
@@ -1792,11 +1839,10 @@ function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN
         'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
-function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, ttl, xRange, yRange)
+function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, sizeRank, ttl, xRange, yRange)
     fig = figure('Color', 'w', 'Name', ttl);
     ax = axes('Parent', fig);
-    z = labelGrid;
-    z(~validMask) = NaN;
+    z = buildSizeRankLabelGrid(labelGrid, validMask, sizeRank);
     imagesc(ax, xCenters, yCenters, z);
     set(ax, 'YDir', 'normal');
     axis(ax, 'equal');
@@ -1805,13 +1851,67 @@ function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, ttl, xRan
     grid(ax, 'on');
     box(ax, 'on');
     set(ax, 'GridAlpha', 0.12, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
-    cmap = lines(max(max(labelGrid(:)), 1) + 1);
+    cmap = buildSizeRankColormap(numel(sizeRank.rank));
     colormap(ax, cmap);
+    setAxesCLim(ax, [0 max(numel(sizeRank.rank), 1)]);
     cb = colorbar(ax);
-    ylabel(cb, 'Component Label');
+    ylabel(cb, 'Size Rank (largest first)');
     xlabel(ax, 'x', 'FontName', 'Times New Roman', 'FontSize', 13);
     ylabel(ax, 'y', 'FontName', 'Times New Roman', 'FontSize', 13);
     title(ax, ttl, 'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
+    set(fig, 'UserData', sizeRank);
+end
+
+function z = buildSizeRankLabelGrid(labelGrid, validMask, sizeRank)
+    z = zeros(size(labelGrid));
+    z(~validMask) = NaN;
+    if isempty(sizeRank.rankByLabel)
+        return;
+    end
+
+    labels = labelGrid(validMask);
+    mapped = zeros(size(labels));
+    positive = labels > 0 & labels <= numel(sizeRank.rankByLabel);
+    mapped(positive) = sizeRank.rankByLabel(labels(positive));
+    z(validMask) = mapped;
+end
+
+function cmap = buildSizeRankColormap(numComponents)
+    backgroundColor = [0.93 0.93 0.91];
+    if numComponents <= 0
+        cmap = [backgroundColor; backgroundColor];
+        return;
+    end
+
+    base = [ ...
+        0.88 0.32 0.10; ...
+        0.19 0.58 0.33; ...
+        0.78 0.53 0.12; ...
+        0.70 0.21 0.58; ...
+        0.12 0.61 0.66; ...
+        0.56 0.40 0.72; ...
+        0.72 0.25 0.26; ...
+        0.37 0.60 0.18];
+
+    if numComponents <= size(base, 1)
+        colors = base(1:numComponents, :);
+    else
+        colors = [base; generateExtraComponentColors(numComponents - size(base, 1))];
+    end
+    cmap = [backgroundColor; colors];
+end
+
+function colors = generateExtraComponentColors(n)
+    if n <= 0
+        colors = zeros(0, 3);
+        return;
+    end
+
+    k = (0:n-1).';
+    hues = mod(0.04 + 0.61803398875 .* k, 1);
+    blueBand = hues > 0.54 & hues < 0.70;
+    hues(blueBand) = mod(hues(blueBand) + 0.20, 1);
+    colors = hsv2rgb([hues, 0.68 * ones(n, 1), 0.86 * ones(n, 1)]);
 end
 
 function fig = plotConnectivityHighlights(xCenters, yCenters, validMask, pore, matrix, timestep, xRange, yRange)
@@ -1907,7 +2007,7 @@ function padding = inferPlotPadding(centers)
     padding = 0.5;
 end
 
-function fig = plotCountDistribution(dist, phaseName)
+function fig = plotCountDistribution(dist, phaseName, xRange)
     fig = [];
     if isempty(dist.count)
         return;
@@ -1922,6 +2022,14 @@ function fig = plotCountDistribution(dist, phaseName)
     grid(ax, 'on');
     box(ax, 'on');
     set(ax, 'GridAlpha', 0.16, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
+    applyDistributionXRange(ax, xRange, dist.centers);
+end
+
+function applyDistributionXRange(ax, xRange, xFallback)
+    if isempty(xRange)
+        return;
+    end
+    xlim(ax, normalizePlotRange(xRange, xFallback));
 end
 
 function fig = plotPositionDistribution(dist, phaseName, axisName)
