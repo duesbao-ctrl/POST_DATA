@@ -6,7 +6,8 @@ function result = cluster_postprocess(clusterPath, varargin)
 % result = cluster_postprocess('cluster_chunk.txt', ...
 %     'SelectBy', 'Time', 'Time', 33.0, 'SlurmPath', 'slurm_9.log', ...
 %     'Dim', 2, 'Dx', 0.025, 'Range_c_x', [0 20], ...
-%     'Range_diameter', [0.5 5.0], 'MeanPowerM', 1, 'MeanPowerN', 0, ...
+%     'DiameterRange', [0.5 5.0], 'DiameterHistBinSize', 0.1, ...
+%     'MeanPowerM', 1, 'MeanPowerN', 0, ...
 %     'XVarForMean', 'c_x');
 
     p = inputParser;
@@ -29,15 +30,16 @@ function result = cluster_postprocess(clusterPath, varargin)
     p.addParameter('Range_vx', [], @isnumeric);
     p.addParameter('Range_vy', [], @isnumeric);
     p.addParameter('Range_vz', [], @isnumeric);
-    p.addParameter('Range_diameter', [], @isnumeric);
+    p.addParameter('DiameterRange', [], @isnumeric);
 
     p.addParameter('XVarForMean', 'c_x', @isTextScalar);       % c_x/c_y/c_z/vx/vy/vz
     p.addParameter('MeanNumBins', 20, @isnumeric);
     p.addParameter('MeanPowerM', 1, @isnumeric);
     p.addParameter('MeanPowerN', 0, @isnumeric);
-    p.addParameter('HistNumBins', 30, @isnumeric);
     p.addParameter('DiameterHistBinSize', [], @isnumeric);
-    p.addParameter('DiameterPlotRange', [], @isnumeric);
+    p.addParameter('DiameterEmptyBinMode', 'zero', @isTextScalar);
+    p.addParameter('DiameterPlotStyle', 'bar', @isTextScalar);
+    p.addParameter('DiameterFitTypes', {'powerlaw', 'gamma', 'lognormal'});
     p.addParameter('HistScale', 'linear', @isTextScalar);      % linear/semilogx/semilogy/loglog/log
 
     p.addParameter('MakePlots', true, @islogical);
@@ -50,10 +52,16 @@ function result = cluster_postprocess(clusterPath, varargin)
     opt.NcountVar = toChar(opt.NcountVar);
     opt.XVarForMean = toChar(opt.XVarForMean);
     opt.HistScale = toChar(opt.HistScale);
+    opt.DiameterEmptyBinMode = normalizeEmptyBinMode(opt.DiameterEmptyBinMode);
+    opt.DiameterPlotStyle = lower(strtrim(toChar(opt.DiameterPlotStyle)));
+    opt.DiameterFitTypes = normalizeFitTypes(opt.DiameterFitTypes, 'DiameterFitTypes');
     validateMeanPower(opt.MeanPowerM, 'MeanPowerM');
     validateMeanPower(opt.MeanPowerN, 'MeanPowerN');
     validatePositiveScalarOrEmpty(opt.DiameterHistBinSize, 'DiameterHistBinSize');
-    validateRangeOrEmpty(opt.DiameterPlotRange, 'DiameterPlotRange');
+    validateRangeOrEmpty(opt.DiameterRange, 'DiameterRange');
+    validateEmptyBinMode(opt.DiameterEmptyBinMode);
+    validateDiameterPlotStyle(opt.DiameterPlotStyle);
+    validateHistScale(opt.HistScale);
 
     meanDefinition = struct('m', opt.MeanPowerM, 'n', opt.MeanPowerN);
 
@@ -90,7 +98,7 @@ function result = cluster_postprocess(clusterPath, varargin)
     validDia = isfinite(diameterAll) & (diameterAll > 0);
     dataSel = dataSel(validDia, :);
     diameter = diameterAll(validDia);
-    diaMask = applyNumericRange(true(size(diameter)), diameter, opt.Range_diameter, 'diameter');
+    diaMask = applyNumericRange(true(size(diameter)), diameter, opt.DiameterRange, 'diameter');
     dataSel = dataSel(diaMask, :);
     diameter = diameter(diaMask);
 
@@ -107,6 +115,9 @@ function result = cluster_postprocess(clusterPath, varargin)
         result.colIndex = col;
         result.filteredData = dataSel;
         result.diameter = [];
+        result.diameterRange = opt.DiameterRange;
+        result.diameterEmptyBinMode = opt.DiameterEmptyBinMode;
+        result.diameterPlotStyle = opt.DiameterPlotStyle;
         result.stats = [];
         result.fit = [];
         result.meanDefinition = meanDefinition;
@@ -118,7 +129,8 @@ function result = cluster_postprocess(clusterPath, varargin)
 
     stats = basicStats(diameter, opt.MeanPowerM, opt.MeanPowerN);
     fit = fitByMoments(diameter);
-    histData = buildHistogramData(diameter, opt.HistNumBins, opt.DiameterHistBinSize);
+    histData = buildHistogramData(diameter, opt.DiameterRange, ...
+        opt.DiameterHistBinSize, opt.DiameterFitTypes, opt.DiameterEmptyBinMode);
 
     xVarName = matlab.lang.makeValidName(opt.XVarForMean);
     meanBin = struct('edges', [], 'centers', [], 'meanDiameter', [], 'count', []);
@@ -133,10 +145,11 @@ function result = cluster_postprocess(clusterPath, varargin)
 
     plots = emptyPlotsStruct();
     if opt.MakePlots
-        plots.countFig = plotCountDistributionWithFits(histData, fit, opt.HistScale, opt.DiameterPlotRange);
-        plots.probFig = plotProbabilityDistributionWithFits(histData, fit, opt.HistScale, opt.DiameterPlotRange);
-        plots.histFig = plots.countFig; % Deprecated compatibility alias.
-        plots.cdfFig  = plotCDFBothDirections(diameter, opt.DiameterPlotRange);
+        plots.countFig = plotCountDistributionWithFits(histData, opt.HistScale, ...
+            opt.DiameterRange, opt.DiameterPlotStyle);
+        plots.probFig = plotProbabilityDistributionWithFits(histData, opt.HistScale, ...
+            opt.DiameterRange, opt.DiameterPlotStyle);
+        plots.cdfFig  = plotCDFBothDirections(diameter, opt.DiameterRange);
         hasMeanData = any(~isnan(meanBin.meanDiameter) & (meanBin.count > 0));
         if hasMeanX && hasMeanData
             plots.meanFig = plotMeanByBin(meanBin, opt.XVarForMean);
@@ -159,6 +172,9 @@ function result = cluster_postprocess(clusterPath, varargin)
     result.colIndex = col;
     result.filteredData = dataSel;
     result.diameter = diameter;
+    result.diameterRange = opt.DiameterRange;
+    result.diameterEmptyBinMode = opt.DiameterEmptyBinMode;
+    result.diameterPlotStyle = opt.DiameterPlotStyle;
     result.stats = stats;
     result.fit = fit;
     result.meanDefinition = meanDefinition;
@@ -257,6 +273,7 @@ function fit = fitByMoments(x)
     fit = struct();
     fit.lognormal = struct('mu', mu, 'sigma', sigma);
     fit.gamma = struct('n', n, 'xMean', m);
+    [~, fit.powerlaw] = powerlawPdf([], x);
 end
 
 function out = binMeanDiameter(x, d, nBins, meanPowerM, meanPowerN)
@@ -294,13 +311,30 @@ function out = binMeanDiameter(x, d, nBins, meanPowerM, meanPowerN)
     out.count = cnt;
 end
 
-function histData = buildHistogramData(d, nBins, binSize)
+function histData = buildHistogramData(d, diameterRange, binSize, fitTypes, emptyBinMode)
+    if nargin < 2
+        diameterRange = [];
+    end
     if nargin < 3
         binSize = [];
     end
-    edges = buildHistogramEdgesFromData(d, nBins, binSize);
-    [counts, edges] = histcounts(d, edges);
-    centers = 0.5 * (edges(1:end-1) + edges(2:end));
+    if nargin < 4
+        fitTypes = {'powerlaw', 'gamma', 'lognormal'};
+    end
+    if nargin < 5
+        emptyBinMode = 'zero';
+    end
+    d = d(:);
+    d = d(isfinite(d) & (d > 0));
+    if isempty(d)
+        histData = emptyHistogramData();
+        histData.emptyBinMode = emptyBinMode;
+        return;
+    end
+
+    edges = buildHistogramEdgesFromData(d, diameterRange, binSize);
+    [rawCounts, edges] = histcounts(d, edges);
+    rawCenters = 0.5 * (edges(1:end-1) + edges(2:end));
     widths = diff(edges);
     if isempty(widths)
         binWidth = NaN;
@@ -308,30 +342,62 @@ function histData = buildHistogramData(d, nBins, binSize)
         binWidth = mean(widths);
     end
 
-    totalCount = sum(counts);
+    totalCount = sum(rawCounts);
     if totalCount > 0
-        prob = counts / totalCount;
+        rawProb = rawCounts / totalCount;
     else
-        prob = zeros(size(counts));
+        rawProb = zeros(size(rawCounts));
     end
+    [centers, counts, prob, keptBins] = applyEmptyBinMode(rawCenters, rawCounts, rawProb, emptyBinMode);
 
     xg = linspace(max(min(d), eps), max(d), 300);
     histData = struct();
     histData.counts = counts;
     histData.edges = edges;
     histData.centers = centers;
+    histData.rawCounts = rawCounts;
+    histData.rawCenters = rawCenters;
+    histData.rawProbability = rawProb;
+    histData.keptBins = keptBins;
+    histData.emptyBinMode = emptyBinMode;
     histData.binWidth = binWidth;
     histData.totalCount = totalCount;
     histData.prob = prob;
     histData.fitX = xg;
+    histData.fit = buildDiameterFitCurves(d, xg, binWidth, totalCount, fitTypes);
 end
 
-function edges = buildHistogramEdgesFromData(x, nBins, binSize)
+function [centers, counts, probability, keptBins] = applyEmptyBinMode(rawCenters, rawCounts, rawProbability, mode)
+    keptBins = true(size(rawCounts));
+    centers = rawCenters;
+    counts = double(rawCounts);
+    probability = rawProbability;
+    zeroBins = (rawCounts == 0);
+
+    switch mode
+        case 'zero'
+            % Keep the natural histogram values.
+        case 'nan'
+            counts(zeroBins) = NaN;
+            probability(zeroBins) = NaN;
+        case 'remove'
+            keptBins = ~zeroBins;
+            centers = centers(keptBins);
+            counts = counts(keptBins);
+            probability = probability(keptBins);
+    end
+end
+
+function edges = buildHistogramEdgesFromData(x, diameterRange, binSize)
     x = x(:);
     x = x(isfinite(x) & (x > 0));
-    nBins = max(1, round(nBins));
-    xmin = min(x);
-    xmax = max(x);
+    if isempty(diameterRange)
+        xmin = min(x);
+        xmax = max(x);
+    else
+        xmin = min(diameterRange(:));
+        xmax = max(diameterRange(:));
+    end
 
     if ~isempty(binSize)
         binSize = double(binSize);
@@ -351,11 +417,52 @@ function edges = buildHistogramEdgesFromData(x, nBins, binSize)
         return;
     end
 
+    binSize = chooseAutoDiameterBinSize(x);
     if xmin == xmax
-        pad = max(1e-12, abs(xmin) * 1e-6);
-        edges = linspace(xmin - pad, xmax + pad, nBins + 1);
+        edges = [xmin - 0.5 * binSize, xmin + 0.5 * binSize];
+        return;
+    end
+    edges = xmin:binSize:xmax;
+    if isempty(edges)
+        edges = [xmin, xmin + binSize];
+    elseif edges(end) < xmax
+        edges(end + 1) = edges(end) + binSize;
+    end
+    if numel(edges) < 2
+        edges = [xmin, xmin + binSize];
+    end
+end
+
+function binSize = chooseAutoDiameterBinSize(x)
+    x = sort(x(:));
+    n = numel(x);
+    span = max(x) - min(x);
+    if n < 2 || span <= 0
+        binSize = max(1e-12, max(abs(x(1)), 1) * 0.1);
+        return;
+    end
+
+    q25 = percentileFromSorted(x, 25);
+    q75 = percentileFromSorted(x, 75);
+    iqrValue = q75 - q25;
+    binSize = 2 * iqrValue / (n ^ (1/3));
+    if ~(isfinite(binSize) && binSize > 0)
+        binSize = span / max(1, ceil(sqrt(n)));
+    end
+    if ~(isfinite(binSize) && binSize > 0)
+        binSize = span;
+    end
+end
+
+function q = percentileFromSorted(x, pct)
+    n = numel(x);
+    pos = 1 + (n - 1) * pct / 100;
+    lo = floor(pos);
+    hi = ceil(pos);
+    if lo == hi
+        q = x(lo);
     else
-        edges = linspace(xmin, xmax, nBins + 1);
+        q = x(lo) + (pos - lo) * (x(hi) - x(lo));
     end
 end
 
@@ -364,58 +471,157 @@ function histData = emptyHistogramData()
     histData.counts = [];
     histData.edges = [];
     histData.centers = [];
+    histData.rawCounts = [];
+    histData.rawCenters = [];
+    histData.rawProbability = [];
+    histData.keptBins = [];
+    histData.emptyBinMode = 'zero';
     histData.binWidth = [];
     histData.totalCount = 0;
     histData.prob = [];
     histData.fitX = [];
+    histData.fit = emptyDiameterFitStruct();
 end
 
-function fig = plotCountDistributionWithFits(histData, fit, histScale, xRange)
+function fit = buildDiameterFitCurves(xSample, xGrid, binWidth, totalCount, fitTypes)
+    xSample = xSample(:);
+    xSample = xSample(isfinite(xSample) & (xSample > 0));
+    fit = emptyDiameterFitStruct();
+    fit.x = xGrid;
+    if isempty(xSample) || isempty(xGrid)
+        return;
+    end
+
+    for i = 1:numel(fitTypes)
+        typeName = fitTypes{i};
+        pdfVals = nan(size(xGrid));
+        params = struct();
+        switch typeName
+            case 'powerlaw'
+                [pdfVals, params] = powerlawPdf(xGrid, xSample);
+            case 'gamma'
+                [pdfVals, params] = gammaPdfMoment(xGrid, xSample);
+            case 'lognormal'
+                [pdfVals, params] = lognormalPdfMoment(xGrid, xSample);
+        end
+        fit.(typeName) = buildFitCurveEntry(typeName, xGrid, pdfVals, params, binWidth, totalCount);
+    end
+end
+
+function fit = emptyDiameterFitStruct()
+    emptyEntry = struct('enabled', false, 'name', '', 'x', [], 'pdf', [], ...
+        'count', [], 'probability', [], 'params', struct());
+    fit = struct();
+    fit.x = [];
+    fit.powerlaw = emptyEntry;
+    fit.gamma = emptyEntry;
+    fit.lognormal = emptyEntry;
+end
+
+function entry = buildFitCurveEntry(typeName, x, pdfVals, params, binWidth, totalCount)
+    entry = struct();
+    entry.enabled = any(isfinite(pdfVals) & (pdfVals >= 0));
+    entry.name = fitDisplayName(typeName);
+    entry.x = x;
+    entry.pdf = pdfVals;
+    entry.count = pdfVals .* totalCount .* binWidth;
+    entry.probability = pdfVals .* binWidth;
+    entry.params = params;
+    entry.count(~isfinite(entry.count)) = NaN;
+    entry.probability(~isfinite(entry.probability)) = NaN;
+end
+
+function [handles, labels] = plotFitCurves(ax, fit, yField)
+    handles = [];
+    labels = {};
+    if isempty(fit) || isempty(fit.x)
+        return;
+    end
+
+    types = {'powerlaw', 'gamma', 'lognormal'};
+    styles = {'k-', 'm--', 'r-'};
+    for i = 1:numel(types)
+        entry = fit.(types{i});
+        if ~entry.enabled || ~isfield(entry, yField)
+            continue;
+        end
+        y = entry.(yField);
+        valid = isfinite(entry.x) & isfinite(y) & (y >= 0);
+        if ~any(valid)
+            continue;
+        end
+        handles(end + 1) = plot(ax, entry.x(valid), y(valid), styles{i}, 'LineWidth', 1.6); %#ok<AGROW>
+        labels{end + 1} = [entry.name, ' fit']; %#ok<AGROW>
+    end
+end
+
+function fig = plotCountDistributionWithFits(histData, histScale, xRange, plotStyle)
     fig = figure('Name', 'Cluster Diameter Count Distribution');
 
-    hBar = bar(histData.centers, histData.counts, 1.0, ...
-        'FaceColor', [0.35 0.6 0.85], 'EdgeColor', 'none');
+    h = [];
+    labels = {};
+    ax = gca;
+    hData = plotDistributionSeries(ax, histData.centers, histData.counts, ...
+        plotStyle, [0.35 0.6 0.85]);
     hold on;
-
-    pLogn = lognormalPdf(histData.fitX, fit.lognormal.mu, fit.lognormal.sigma);
-    pGam = gammaPdfImageForm(histData.fitX, fit.gamma.n, fit.gamma.xMean);
-    scale = histData.totalCount * histData.binWidth;
-    hLogn = plot(histData.fitX, pLogn * scale, 'r-', 'LineWidth', 1.6);
-    hGam = plot(histData.fitX, pGam * scale, 'm--', 'LineWidth', 1.6);
+    h(end + 1) = hData;
+    labels{end + 1} = 'Count (hist)';
+    [hFit, fitLabels] = plotFitCurves(ax, histData.fit, 'count');
+    h = [h, hFit];
+    labels = [labels, fitLabels];
 
     xlabel('Equivalent Diameter');
     ylabel('Count');
-    title('Cluster count distribution with Lognormal/Gamma fits');
-    legend([hBar, hLogn, hGam], ...
-        {'Count (hist)', 'Lognormal fit', 'Gamma fit'}, ...
-        'Location', 'best');
+    title('Cluster count distribution with distribution fits');
+    if numel(h) > 1
+        legend(h, labels, 'Location', 'best');
+    end
     applyHistScale(histScale);
-    applyDistributionXRange(gca, xRange, histData.centers);
+    applyDistributionXRange(ax, xRange, histData.centers);
     grid on;
 end
 
-function fig = plotProbabilityDistributionWithFits(histData, fit, histScale, xRange)
+function fig = plotProbabilityDistributionWithFits(histData, histScale, xRange, plotStyle)
     fig = figure('Name', 'Cluster Diameter Probability Distribution');
 
-    hBar = bar(histData.centers, histData.prob, 1.0, ...
-        'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none');
+    h = [];
+    labels = {};
+    ax = gca;
+    hData = plotDistributionSeries(ax, histData.centers, histData.prob, ...
+        plotStyle, [0.7 0.7 0.7]);
     hold on;
-
-    pLogn = lognormalPdf(histData.fitX, fit.lognormal.mu, fit.lognormal.sigma);
-    pGam = gammaPdfImageForm(histData.fitX, fit.gamma.n, fit.gamma.xMean);
-    scale = histData.binWidth;
-    hLogn = plot(histData.fitX, pLogn * scale, 'r-', 'LineWidth', 1.6);
-    hGam = plot(histData.fitX, pGam * scale, 'm--', 'LineWidth', 1.6);
+    h(end + 1) = hData;
+    labels{end + 1} = 'Probability (bin)';
+    [hFit, fitLabels] = plotFitCurves(ax, histData.fit, 'probability');
+    h = [h, hFit];
+    labels = [labels, fitLabels];
 
     xlabel('Equivalent Diameter');
     ylabel('Probability');
-    title('Cluster probability distribution with Lognormal/Gamma fits');
-    legend([hBar, hLogn, hGam], ...
-        {'Probability (bin)', 'Lognormal fit', 'Gamma fit'}, ...
-        'Location', 'best');
+    title('Cluster probability distribution with distribution fits');
+    if numel(h) > 1
+        legend(h, labels, 'Location', 'best');
+    end
     applyHistScale(histScale);
-    applyDistributionXRange(gca, xRange, histData.centers);
+    applyDistributionXRange(ax, xRange, histData.centers);
     grid on;
+end
+
+function h = plotDistributionSeries(ax, x, y, plotStyle, color)
+    x = x(:);
+    y = y(:);
+    if isempty(x) || isempty(y)
+        h = [];
+        return;
+    end
+
+    switch plotStyle
+        case 'bar'
+            h = bar(ax, x, y, 1.0, 'FaceColor', color, 'EdgeColor', 'none');
+        case 'scatter'
+            valid = isfinite(x) & isfinite(y);
+            h = scatter(ax, x(valid), y(valid), 36, color, 'filled');
+    end
 end
 
 function applyHistScale(histScale)
@@ -510,7 +716,7 @@ function fig = plotMeanByBin(meanBin, xVarName)
 end
 
 function plots = emptyPlotsStruct()
-    plots = struct('histFig', [], 'countFig', [], 'probFig', [], 'cdfFig', [], 'meanFig', []);
+    plots = struct('countFig', [], 'probFig', [], 'cdfFig', [], 'meanFig', []);
 end
 
 function meanVal = momentRatioMean(x, meanPowerM, meanPowerN)
@@ -555,29 +761,175 @@ function validateRangeOrEmpty(v, name)
     end
 end
 
-function p = lognormalPdf(x, mu, sigma)
-    if sigma <= 0 || ~isfinite(sigma)
-        p = zeros(size(x));
-        return;
+function mode = normalizeEmptyBinMode(value)
+    mode = lower(strtrim(toChar(value)));
+    switch mode
+        case {'zero', '0'}
+            mode = 'zero';
+        case {'nan', 'na'}
+            mode = 'nan';
+        case {'remove', 'delete', 'drop'}
+            mode = 'remove';
     end
-    p = (1 ./ (x .* sigma .* sqrt(2*pi))) .* exp(-((log(x)-mu).^2) ./ (2*sigma^2));
-    p(~isfinite(p)) = 0;
 end
 
-function p = gammaPdfImageForm(x, n, xMean)
-%GAMMAPDFIMAGEFORM Gamma PDF in the form shown by user:
-%   f(xi) = n^n/Gamma(n) * xi^(n-1) * exp(-n*xi),  xi = x/xMean
-% Converted back to x-space by: f_x(x) = f_xi(x/xMean) / xMean
+function validateEmptyBinMode(mode)
+    valid = {'zero', 'nan', 'remove'};
+    if ~any(strcmp(mode, valid))
+        error('cluster_postprocess:BadEmptyBinMode', ...
+            'DiameterEmptyBinMode must be zero/nan/remove.');
+    end
+end
 
-    if ~(isfinite(n) && isfinite(xMean)) || n <= 0 || xMean <= 0
-        p = zeros(size(x));
+function validateDiameterPlotStyle(plotStyle)
+    valid = {'bar', 'scatter'};
+    if ~any(strcmp(plotStyle, valid))
+        error('cluster_postprocess:BadDiameterPlotStyle', ...
+            'DiameterPlotStyle must be bar or scatter.');
+    end
+end
+
+function validateHistScale(histScale)
+    valid = {'linear', 'semilogx', 'semilogy', 'loglog', 'semilog', 'log'};
+    if ~any(strcmpi(strtrim(histScale), valid))
+        error('cluster_postprocess:BadHistScale', ...
+            'HistScale must be linear/semilogx/semilogy/loglog.');
+    end
+end
+
+function fitTypes = normalizeFitTypes(value, name)
+    if isTextScalar(value)
+        textValue = lower(strtrim(toChar(value)));
+        if isempty(textValue) || strcmp(textValue, 'none') || strcmp(textValue, 'off')
+            fitTypes = {};
+            return;
+        end
+        if strcmp(textValue, 'all')
+            fitTypes = {'powerlaw', 'gamma', 'lognormal'};
+            return;
+        end
+        raw = strsplit(textValue, {',', ';', '|', ' '});
+    elseif iscell(value)
+        raw = value;
+    else
+        error('cluster_postprocess:BadFitTypes', ...
+            '%s must be a string or a cell array of strings.', name);
+    end
+
+    fitTypes = {};
+    for i = 1:numel(raw)
+        if isempty(raw{i})
+            continue;
+        end
+        item = lower(strtrim(toChar(raw{i})));
+        if isempty(item)
+            continue;
+        end
+        if strcmp(item, 'all')
+            fitTypes = {'powerlaw', 'gamma', 'lognormal'};
+            return;
+        elseif strcmp(item, 'none') || strcmp(item, 'off')
+            fitTypes = {};
+            return;
+        end
+        fitTypes{end + 1} = normalizeFitTypeName(item, name); %#ok<AGROW>
+    end
+    fitTypes = uniqueStable(fitTypes);
+end
+
+function typeName = normalizeFitTypeName(item, name)
+    switch item
+        case {'powerlaw', 'power-law', 'power', 'pareto', 'powerexponent', 'power-exponent'}
+            typeName = 'powerlaw';
+        case {'gamma', 'gam'}
+            typeName = 'gamma';
+        case {'lognormal', 'log-normal', 'lognorm', 'ln'}
+            typeName = 'lognormal';
+        otherwise
+            error('cluster_postprocess:BadFitTypes', ...
+                'Unsupported %s entry "%s". Use powerlaw/gamma/lognormal/all/none.', name, item);
+    end
+end
+
+function out = uniqueStable(in)
+    out = {};
+    for i = 1:numel(in)
+        if ~any(strcmp(in{i}, out))
+            out{end + 1} = in{i}; %#ok<AGROW>
+        end
+    end
+end
+
+function [pdfVals, params] = powerlawPdf(xGrid, xSample)
+    xmin = min(xSample);
+    params = struct('alpha', NaN, 'xmin', xmin);
+    pdfVals = nan(size(xGrid));
+    if numel(xSample) < 2 || xmin <= 0
         return;
     end
 
-    xi = x ./ xMean;
-    pXi = (n.^n ./ gamma(n)) .* (xi.^(n-1)) .* exp(-n .* xi);
-    p = pXi ./ xMean;
-    p(~isfinite(p)) = 0;
+    denom = sum(log(xSample ./ xmin));
+    if ~(isfinite(denom) && denom > 0)
+        return;
+    end
+    alpha = 1 + numel(xSample) / denom;
+    params.alpha = alpha;
+    if isempty(xGrid)
+        return;
+    end
+    pdfVals = zeros(size(xGrid));
+    valid = xGrid >= xmin;
+    pdfVals(valid) = (alpha - 1) .* (xmin .^ (alpha - 1)) .* (xGrid(valid) .^ (-alpha));
+end
+
+function [pdfVals, params] = gammaPdfMoment(xGrid, xSample)
+    m = mean(xSample);
+    v = var(xSample);
+    params = struct('shape', NaN, 'scale', NaN);
+    pdfVals = nan(size(xGrid));
+    if ~(isfinite(m) && isfinite(v) && m > 0 && v > 0)
+        return;
+    end
+
+    shape = (m * m) / v;
+    scale = v / m;
+    params.shape = shape;
+    params.scale = scale;
+    pdfVals = zeros(size(xGrid));
+    valid = xGrid > 0;
+    pdfVals(valid) = (xGrid(valid).^(shape - 1) .* exp(-xGrid(valid) ./ scale)) ./ ...
+        (gamma(shape) .* (scale .^ shape));
+    pdfVals(~isfinite(pdfVals)) = NaN;
+end
+
+function [pdfVals, params] = lognormalPdfMoment(xGrid, xSample)
+    lx = log(xSample);
+    mu = mean(lx);
+    sigma = std(lx);
+    params = struct('mu', mu, 'sigma', sigma);
+    pdfVals = nan(size(xGrid));
+    if ~(isfinite(mu) && isfinite(sigma) && sigma > 0)
+        return;
+    end
+
+    pdfVals = zeros(size(xGrid));
+    valid = xGrid > 0;
+    pdfVals(valid) = (1 ./ (xGrid(valid) .* sigma .* sqrt(2*pi))) .* ...
+        exp(-((log(xGrid(valid)) - mu) .^ 2) ./ (2 * sigma ^ 2));
+    pdfVals(~isfinite(pdfVals)) = NaN;
+end
+
+function name = fitDisplayName(typeName)
+    switch typeName
+        case 'powerlaw'
+            name = 'Power-law';
+        case 'gamma'
+            name = 'Gamma';
+        case 'lognormal'
+            name = 'Lognormal';
+        otherwise
+            name = typeName;
+    end
 end
 
 function tf = isTextScalar(v)

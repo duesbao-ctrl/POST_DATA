@@ -40,10 +40,18 @@ display:
 ## Cluster notes
 
 `taskType='cluster'` reports equivalent-diameter statistics and distribution
-plots. Use `HistNumBins` for the legacy fixed-number-of-bins behavior, or set
-`DiameterHistBinSize` to force a physical bin width. `DiameterPlotRange` only
-crops the x-axis of the diameter distribution plots; use `Range_diameter` when
-the data themselves should be filtered before statistics are computed.
+plots. Use `DiameterRange = [min max]` to choose the diameter scale window used
+by the statistics and distribution plots. Use `DiameterHistBinSize` to set the
+physical bin width of the diameter histogram; leave it empty to use an automatic
+data-driven bin width.
+`DiameterEmptyBinMode` controls empty histogram bins: `zero` keeps zero counts,
+`nan` marks empty-bin count/probability values as `NaN`, and `remove` drops
+empty bins from the plotted/statistical distribution arrays while retaining the
+raw bin fields. `DiameterPlotStyle` selects `bar` or `scatter` for the diameter
+distribution plots.
+`DiameterFitTypes` controls which fitted curves are overlaid on the distribution
+plots: `powerlaw`, `gamma`, `lognormal`, `all`, or `none`. `HistScale` controls
+the axis scaling and supports `linear`, `semilogx`, `semilogy`, and `loglog`.
 
 ## Network2d notes
 
@@ -114,9 +122,17 @@ Average diameter statistics use the generalized mean
 `sum(d^m) / sum(d^n)` through `MeanPowerM` and `MeanPowerN` in
 `NetworkOptions`. The default `m=1, n=0` reduces to the arithmetic mean.
 The area-weighted mean diameter is reported separately as a fixed physical
-quantity. `DiameterHistBinSize` can be used to force a fixed histogram bin
-width; otherwise `HistNumBins` is used. The diameter count plots can be cropped
-with `DiameterPlotRange`.
+quantity. `DiameterRange = [min max]` selects the component diameter window used
+by size statistics, diameter histograms, and diameter distribution plots; global
+topology/connectivity/porosity are still computed from the full network.
+`DiameterHistBinSize` sets the physical histogram bin width; if it is empty, a
+data-driven bin width is used. Empty diameter bins are controlled with
+`DiameterEmptyBinMode = 'zero'`, `'nan'`, or `'remove'`; raw bin arrays remain
+available as `rawCount`, `rawProbability`, and related fields when bins are
+hidden or converted to `NaN`. Diameter distribution plots can be drawn as bars
+or scatter points with `DiameterPlotStyle`, can overlay power-law, gamma, and
+lognormal fits via `DiameterFitTypes`, and can be shown with
+`HistScale = 'linear'`, `'semilogx'`, `'semilogy'`, or `'loglog'`.
 
 `out.stats.network` and `out.stats.thickness` provide optional higher-level
 descriptors when the Image Processing Toolbox is available:

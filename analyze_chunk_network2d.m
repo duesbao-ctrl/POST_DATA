@@ -35,9 +35,12 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     p.addParameter('ProfileNumBins', 20, @isnumeric);
     p.addParameter('ProfileRangeX', [], @isnumeric);
     p.addParameter('ProfileRangeY', [], @isnumeric);
-    p.addParameter('HistNumBins', 30, @isnumeric);
+    p.addParameter('DiameterRange', [], @isnumeric);
     p.addParameter('DiameterHistBinSize', [], @isnumeric);
-    p.addParameter('DiameterPlotRange', [], @isnumeric);
+    p.addParameter('DiameterEmptyBinMode', 'zero', @isTextScalar);
+    p.addParameter('DiameterPlotStyle', 'bar', @isTextScalar);
+    p.addParameter('DiameterFitTypes', {'powerlaw', 'gamma', 'lognormal'});
+    p.addParameter('HistScale', 'linear', @isTextScalar);
     p.addParameter('MeanPowerM', 1, @isnumeric);
     p.addParameter('MeanPowerN', 0, @isnumeric);
     p.addParameter('EnableSkeletonGraph', false, @islogical);
@@ -58,6 +61,10 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     opt.PositionAxis = lower(strtrim(toChar(opt.PositionAxis)));
     opt.ProfileAxis = lower(strtrim(toChar(opt.ProfileAxis)));
     opt.EvolutionSelectBy = lower(strtrim(toChar(opt.EvolutionSelectBy)));
+    opt.DiameterEmptyBinMode = normalizeEmptyBinMode(opt.DiameterEmptyBinMode);
+    opt.DiameterPlotStyle = lower(strtrim(toChar(opt.DiameterPlotStyle)));
+    opt.DiameterFitTypes = normalizeFitTypes(opt.DiameterFitTypes, 'DiameterFitTypes');
+    opt.HistScale = lower(strtrim(toChar(opt.HistScale)));
 
     validateInputs(opt);
 
@@ -129,8 +136,10 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
         plots.connectivityFig = plotConnectivityHighlights(xCenters, yCenters, validMask, ...
             pore, matrix, step.timestep, opt.PlotRangeX, opt.PlotRangeY);
 
-        plots.poreCountFig = plotCountDistribution(pore.equivDiameterDistribution, 'Pore', opt.DiameterPlotRange);
-        plots.matrixCountFig = plotCountDistribution(matrix.equivDiameterDistribution, 'Matrix', opt.DiameterPlotRange);
+        plots.poreCountFig = plotCountDistribution(pore.equivDiameterDistribution, ...
+            'Pore', opt.DiameterRange, opt.HistScale, opt.DiameterPlotStyle);
+        plots.matrixCountFig = plotCountDistribution(matrix.equivDiameterDistribution, ...
+            'Matrix', opt.DiameterRange, opt.HistScale, opt.DiameterPlotStyle);
 
         if strcmp(opt.PositionAxis, 'x') || strcmp(opt.PositionAxis, 'both')
             plots.porePositionFigX = plotPositionDistribution(pore.positionDistribution.x, 'Pore', 'x');
@@ -184,6 +193,9 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     out.positionRange = struct('x', opt.PositionRangeX, 'y', opt.PositionRangeY);
     out.plotRange = struct('x', opt.PlotRangeX, 'y', opt.PlotRangeY);
     out.profileRange = struct('x', opt.ProfileRangeX, 'y', opt.ProfileRangeY);
+    out.diameterRange = opt.DiameterRange;
+    out.diameterEmptyBinMode = opt.DiameterEmptyBinMode;
+    out.diameterPlotStyle = opt.DiameterPlotStyle;
     out.xCenters = xCenters;
     out.yCenters = yCenters;
     out.dx = dx;
@@ -233,10 +245,7 @@ function validateInputs(opt)
         error('analyze_chunk_network2d:BadProfileNumBins', ...
             'ProfileNumBins must be a positive scalar.');
     end
-    if ~(isscalar(opt.HistNumBins) && isfinite(opt.HistNumBins) && opt.HistNumBins >= 1)
-        error('analyze_chunk_network2d:BadHistNumBins', ...
-            'HistNumBins must be a positive scalar.');
-    end
+    validateHistScale(opt.HistScale, 'analyze_chunk_network2d:BadHistScale');
     validateMeanPower(opt.MeanPowerM, 'MeanPowerM');
     validateMeanPower(opt.MeanPowerN, 'MeanPowerN');
     if ~(isscalar(opt.CoordScale) && isnumeric(opt.CoordScale) && isfinite(opt.CoordScale) && opt.CoordScale > 0)
@@ -255,11 +264,13 @@ function validateInputs(opt)
     validatePositiveScalarOrEmpty(opt.Dx, 'Dx');
     validatePositiveScalarOrEmpty(opt.Dy, 'Dy');
     validatePositiveScalarOrEmpty(opt.DiameterHistBinSize, 'DiameterHistBinSize');
+    validateRangeOrEmpty(opt.DiameterRange, 'DiameterRange');
+    validateEmptyBinMode(opt.DiameterEmptyBinMode);
+    validateDiameterPlotStyle(opt.DiameterPlotStyle);
     validateRangeOrEmpty(opt.PositionRangeX, 'PositionRangeX');
     validateRangeOrEmpty(opt.PositionRangeY, 'PositionRangeY');
     validateRangeOrEmpty(opt.PlotRangeX, 'PlotRangeX');
     validateRangeOrEmpty(opt.PlotRangeY, 'PlotRangeY');
-    validateRangeOrEmpty(opt.DiameterPlotRange, 'DiameterPlotRange');
     validateRangeOrEmpty(opt.ProfileRangeX, 'ProfileRangeX');
     validateRangeOrEmpty(opt.ProfileRangeY, 'ProfileRangeY');
     validateRangeOrEmpty(opt.EvolutionRange, 'EvolutionRange');
@@ -289,6 +300,104 @@ function validateMeanPower(v, name)
     if ~(isnumeric(v) && isscalar(v) && isreal(v) && isfinite(v))
         error('analyze_chunk_network2d:BadMeanPower', ...
             '%s must be a finite real scalar.', name);
+    end
+end
+
+function mode = normalizeEmptyBinMode(value)
+    mode = lower(strtrim(toChar(value)));
+    switch mode
+        case {'zero', '0'}
+            mode = 'zero';
+        case {'nan', 'na'}
+            mode = 'nan';
+        case {'remove', 'delete', 'drop'}
+            mode = 'remove';
+    end
+end
+
+function validateEmptyBinMode(mode)
+    valid = {'zero', 'nan', 'remove'};
+    if ~any(strcmp(mode, valid))
+        error('analyze_chunk_network2d:BadEmptyBinMode', ...
+            'DiameterEmptyBinMode must be zero/nan/remove.');
+    end
+end
+
+function validateDiameterPlotStyle(plotStyle)
+    valid = {'bar', 'scatter'};
+    if ~any(strcmp(plotStyle, valid))
+        error('analyze_chunk_network2d:BadDiameterPlotStyle', ...
+            'DiameterPlotStyle must be bar or scatter.');
+    end
+end
+
+function validateHistScale(histScale, errorId)
+    valid = {'linear', 'semilogx', 'semilogy', 'loglog', 'semilog', 'log'};
+    if ~any(strcmpi(strtrim(histScale), valid))
+        error(errorId, 'HistScale must be linear/semilogx/semilogy/loglog.');
+    end
+end
+
+function fitTypes = normalizeFitTypes(value, name)
+    if isTextScalar(value)
+        textValue = lower(strtrim(toChar(value)));
+        if isempty(textValue) || strcmp(textValue, 'none') || strcmp(textValue, 'off')
+            fitTypes = {};
+            return;
+        end
+        if strcmp(textValue, 'all')
+            fitTypes = {'powerlaw', 'gamma', 'lognormal'};
+            return;
+        end
+        raw = strsplit(textValue, {',', ';', '|', ' '});
+    elseif iscell(value)
+        raw = value;
+    else
+        error('analyze_chunk_network2d:BadFitTypes', ...
+            '%s must be a string or a cell array of strings.', name);
+    end
+
+    fitTypes = {};
+    for i = 1:numel(raw)
+        if isempty(raw{i})
+            continue;
+        end
+        item = lower(strtrim(toChar(raw{i})));
+        if isempty(item)
+            continue;
+        end
+        if strcmp(item, 'all')
+            fitTypes = {'powerlaw', 'gamma', 'lognormal'};
+            return;
+        elseif strcmp(item, 'none') || strcmp(item, 'off')
+            fitTypes = {};
+            return;
+        end
+        fitTypes{end + 1} = normalizeFitTypeName(item, name); %#ok<AGROW>
+    end
+    fitTypes = uniqueStable(fitTypes);
+end
+
+function typeName = normalizeFitTypeName(item, name)
+    switch item
+        case {'powerlaw', 'power-law', 'power', 'pareto', 'powerexponent', 'power-exponent'}
+            typeName = 'powerlaw';
+        case {'gamma', 'gam'}
+            typeName = 'gamma';
+        case {'lognormal', 'log-normal', 'lognorm', 'ln'}
+            typeName = 'lognormal';
+        otherwise
+            error('analyze_chunk_network2d:BadFitTypes', ...
+                'Unsupported %s entry "%s". Use powerlaw/gamma/lognormal/all/none.', name, item);
+    end
+end
+
+function out = uniqueStable(in)
+    out = {};
+    for i = 1:numel(in)
+        if ~any(strcmp(in{i}, out))
+            out{end + 1} = in{i}; %#ok<AGROW>
+        end
     end
 end
 
@@ -431,14 +540,16 @@ function phase = analyzePhase(name, phaseMask, validMask, xCenters, yCenters, dx
     eulerCharacteristic = topology.chi;
     topologyNote = topology.note;
 
-    areaStats = computeSummaryStats(comp.area);
-    diamStats = computeSummaryStats(comp.equivDiameter, opt.MeanPowerM, opt.MeanPowerN);
-    equivDiameterDistribution = buildHistogramDistribution(comp.equivDiameter, ...
-        round(opt.HistNumBins), opt.DiameterHistBinSize);
+    [diamForSize, areaForSize, sizeMask] = filterComponentSizesByDiameter( ...
+        comp.equivDiameter, comp.area, opt.DiameterRange);
+    areaStats = computeSummaryStats(areaForSize);
+    diamStats = computeSummaryStats(diamForSize, opt.MeanPowerM, opt.MeanPowerN);
+    equivDiameterDistribution = buildHistogramDistribution(diamForSize, opt.DiameterRange, ...
+        opt.DiameterHistBinSize, opt.DiameterFitTypes, opt.DiameterEmptyBinMode);
     positionDistribution = struct();
-    positionDistribution.x = buildPositionDistribution(comp.centroidX, comp.equivDiameter, ...
+    positionDistribution.x = buildPositionDistribution(comp.centroidX(sizeMask), diamForSize, ...
         round(opt.PositionNumBins), opt.PositionRangeX, dx, opt.MeanPowerM, opt.MeanPowerN);
-    positionDistribution.y = buildPositionDistribution(comp.centroidY, comp.equivDiameter, ...
+    positionDistribution.y = buildPositionDistribution(comp.centroidY(sizeMask), diamForSize, ...
         round(opt.PositionNumBins), opt.PositionRangeY, dy, opt.MeanPowerM, opt.MeanPowerN);
     connectivity = buildDirectionalConnectivity(comp, opt.Boundary, area);
 
@@ -472,6 +583,19 @@ function phase = analyzePhase(name, phaseMask, validMask, xCenters, yCenters, dx
     phase.equivDiameterDistribution = equivDiameterDistribution;
     phase.positionDistribution = positionDistribution;
     phase.connectivity = connectivity;
+end
+
+function [diameterOut, areaOut, mask] = filterComponentSizesByDiameter(diameter, area, diameterRange)
+    diameter = diameter(:);
+    area = area(:);
+    mask = isfinite(diameter) & (diameter > 0);
+    if ~isempty(diameterRange)
+        lo = min(diameterRange(:));
+        hi = max(diameterRange(:));
+        mask = mask & (diameter >= lo) & (diameter <= hi);
+    end
+    diameterOut = diameter(mask);
+    areaOut = area(mask);
 end
 
 function [labelGrid, wrapXComp, wrapYComp] = labelConnectedComponents(phaseMask, validMask, boundary)
@@ -1020,24 +1144,39 @@ function q = computeQuantiles(x, prob)
     end
 end
 
-function dist = buildHistogramDistribution(x, nBins, binSize)
+function dist = buildHistogramDistribution(x, diameterRange, binSize, fitTypes, emptyBinMode)
+    if nargin < 2
+        diameterRange = [];
+    end
     if nargin < 3
         binSize = [];
+    end
+    if nargin < 4
+        fitTypes = {'powerlaw', 'gamma', 'lognormal'};
+    end
+    if nargin < 5
+        emptyBinMode = 'zero';
     end
     x = x(:);
     x = x(isfinite(x) & (x > 0));
     dist = struct('edges', [], 'centers', [], 'count', [], 'probability', [], ...
-        'cdfX', [], 'cdfCount', [], 'cdfProbability', [], 'binSize', []);
+        'rawCenters', [], 'rawCount', [], 'rawProbability', [], 'keptBins', [], ...
+        'emptyBinMode', emptyBinMode, 'cdfX', [], 'cdfCount', [], ...
+        'cdfProbability', [], 'binSize', [], 'fit', []);
 
     if isempty(x)
+        dist.fit = emptyDiameterFitStruct();
         return;
     end
 
-    edges = buildHistogramEdgesFromData(x, nBins, binSize);
+    edges = buildHistogramEdgesFromData(x, diameterRange, binSize);
 
-    count = histcounts(x, edges);
-    centers = 0.5 * (edges(1:end-1) + edges(2:end));
-    probability = count ./ sum(count);
+    rawCount = histcounts(x, edges);
+    rawCenters = 0.5 * (edges(1:end-1) + edges(2:end));
+    totalCount = sum(rawCount);
+    rawProbability = rawCount ./ totalCount;
+    [centers, count, probability, keptBins] = applyEmptyBinMode( ...
+        rawCenters, rawCount, rawProbability, emptyBinMode);
 
     xs = sort(x, 'ascend');
     cdfCount = (1:numel(xs)).';
@@ -1047,16 +1186,46 @@ function dist = buildHistogramDistribution(x, nBins, binSize)
     dist.centers = centers;
     dist.count = count;
     dist.probability = probability;
+    dist.rawCenters = rawCenters;
+    dist.rawCount = rawCount;
+    dist.rawProbability = rawProbability;
+    dist.keptBins = keptBins;
     dist.cdfX = xs;
     dist.cdfCount = cdfCount;
     dist.cdfProbability = cdfProbability;
     dist.binSize = mean(diff(edges));
+    dist.fit = buildDiameterFitCurves(x, dist.binSize, totalCount, fitTypes);
 end
 
-function edges = buildHistogramEdgesFromData(x, nBins, binSize)
-    nBins = max(1, round(nBins));
-    xmin = min(x);
-    xmax = max(x);
+function [centers, count, probability, keptBins] = applyEmptyBinMode(rawCenters, rawCount, rawProbability, mode)
+    keptBins = true(size(rawCount));
+    centers = rawCenters;
+    count = double(rawCount);
+    probability = rawProbability;
+    zeroBins = (rawCount == 0);
+
+    switch mode
+        case 'zero'
+            % Keep the natural histogram values.
+        case 'nan'
+            count(zeroBins) = NaN;
+            probability(zeroBins) = NaN;
+        case 'remove'
+            keptBins = ~zeroBins;
+            centers = centers(keptBins);
+            count = count(keptBins);
+            probability = probability(keptBins);
+    end
+end
+
+function edges = buildHistogramEdgesFromData(x, diameterRange, binSize)
+    if isempty(diameterRange)
+        xmin = min(x);
+        xmax = max(x);
+    else
+        xmin = min(diameterRange(:));
+        xmax = max(diameterRange(:));
+    end
 
     if ~isempty(binSize)
         binSize = double(binSize);
@@ -1076,11 +1245,52 @@ function edges = buildHistogramEdgesFromData(x, nBins, binSize)
         return;
     end
 
+    binSize = chooseAutoDiameterBinSize(x);
     if xmin == xmax
-        pad = max(1e-12, abs(xmin) * 1e-6);
-        edges = linspace(xmin - pad, xmax + pad, nBins + 1);
+        edges = [xmin - 0.5 * binSize, xmin + 0.5 * binSize];
+        return;
+    end
+    edges = xmin:binSize:xmax;
+    if isempty(edges)
+        edges = [xmin, xmin + binSize];
+    elseif edges(end) < xmax
+        edges(end + 1) = edges(end) + binSize;
+    end
+    if numel(edges) < 2
+        edges = [xmin, xmin + binSize];
+    end
+end
+
+function binSize = chooseAutoDiameterBinSize(x)
+    x = sort(x(:));
+    n = numel(x);
+    span = max(x) - min(x);
+    if n < 2 || span <= 0
+        binSize = max(1e-12, max(abs(x(1)), 1) * 0.1);
+        return;
+    end
+
+    q25 = percentileFromSorted(x, 25);
+    q75 = percentileFromSorted(x, 75);
+    iqrValue = q75 - q25;
+    binSize = 2 * iqrValue / (n ^ (1/3));
+    if ~(isfinite(binSize) && binSize > 0)
+        binSize = span / max(1, ceil(sqrt(n)));
+    end
+    if ~(isfinite(binSize) && binSize > 0)
+        binSize = span;
+    end
+end
+
+function q = percentileFromSorted(x, pct)
+    n = numel(x);
+    pos = 1 + (n - 1) * pct / 100;
+    lo = floor(pos);
+    hi = ceil(pos);
+    if lo == hi
+        q = x(lo);
     else
-        edges = linspace(xmin, xmax, nBins + 1);
+        q = x(lo) + (pos - lo) * (x(hi) - x(lo));
     end
 end
 
@@ -1196,6 +1406,10 @@ function meta = buildPaperMeta(opt, dx, dy, timestep, chunkFile, xCenters, yCent
     meta.foregroundConnectivity = 4;
     meta.backgroundHoleConnectivity = 8;
     meta.meanDefinition = struct('m', opt.MeanPowerM, 'n', opt.MeanPowerN);
+    meta.diameterRange = opt.DiameterRange;
+    meta.diameterHistogramBinSize = opt.DiameterHistBinSize;
+    meta.diameterEmptyBinMode = opt.DiameterEmptyBinMode;
+    meta.diameterPlotStyle = opt.DiameterPlotStyle;
     meta.coordScale = opt.CoordScale;
     meta.dx = dx;
     meta.dy = dy;
@@ -1357,17 +1571,19 @@ function geom = buildGeometryStats(globalStats)
 end
 
 function sizeStats = buildPhaseSizeStats(phase, opt)
-    area = phase.components.area(:);
-    diameter = phase.components.equivDiameter(:);
+    [diameter, area] = filterComponentSizesByDiameter( ...
+        phase.components.equivDiameter(:), phase.components.area(:), opt.DiameterRange);
 
     sizeStats = struct();
+    sizeStats.diameterRange = opt.DiameterRange;
     sizeStats.count = numel(diameter);
     sizeStats.diameter = diameter;
     sizeStats.maxDiameter = zeroIfEmpty(maxOrNaN(diameter));
     sizeStats.meanDiameter = momentRatioMean(diameter, opt.MeanPowerM, opt.MeanPowerN);
     sizeStats.areaWeightedMeanDiameter = weightedMean(diameter, area);
     sizeStats.hist = struct( ...
-        'diameter', buildPdfHistogramData(diameter, round(opt.HistNumBins), opt.DiameterHistBinSize));
+        'diameter', buildPdfHistogramData(diameter, opt.DiameterRange, ...
+            opt.DiameterHistBinSize, opt.DiameterFitTypes, opt.DiameterEmptyBinMode));
 end
 
 function value = maxOrNaN(x)
@@ -1399,28 +1615,48 @@ function meanVal = weightedMean(x, w)
     meanVal = sum(x .* w) / sum(w);
 end
 
-function histData = buildPdfHistogramData(x, nBins, binSize)
+function histData = buildPdfHistogramData(x, diameterRange, binSize, fitTypes, emptyBinMode)
+    if nargin < 2
+        diameterRange = [];
+    end
     if nargin < 3
         binSize = [];
+    end
+    if nargin < 4
+        fitTypes = {'powerlaw', 'gamma', 'lognormal'};
+    end
+    if nargin < 5
+        emptyBinMode = 'zero';
     end
     x = x(:);
     x = x(isfinite(x) & (x > 0));
     histData = struct('edges', [], 'centers', [], 'count', [], 'pdf', [], ...
-        'probability', [], 'binSize', []);
+        'probability', [], 'rawCenters', [], 'rawCount', [], 'rawPdf', [], ...
+        'rawProbability', [], 'keptBins', [], 'emptyBinMode', emptyBinMode, ...
+        'binSize', [], 'fit', []);
     if isempty(x)
+        histData.fit = emptyDiameterFitStruct();
         return;
     end
 
-    edges = buildHistogramEdgesFromData(x, nBins, binSize);
-    count = histcounts(x, edges);
-    centers = 0.5 * (edges(1:end-1) + edges(2:end));
+    edges = buildHistogramEdgesFromData(x, diameterRange, binSize);
+    rawCount = histcounts(x, edges);
+    rawCenters = 0.5 * (edges(1:end-1) + edges(2:end));
     widths = diff(edges);
-    totalCount = sum(count);
-    pdf = zeros(size(count));
-    prob = zeros(size(count));
+    totalCount = sum(rawCount);
+    rawPdf = zeros(size(rawCount));
+    rawProb = zeros(size(rawCount));
     if totalCount > 0
-        prob = count ./ totalCount;
-        pdf = count ./ (totalCount .* widths);
+        rawProb = rawCount ./ totalCount;
+        rawPdf = rawCount ./ (totalCount .* widths);
+    end
+    [centers, count, prob, keptBins] = applyEmptyBinMode( ...
+        rawCenters, rawCount, rawProb, emptyBinMode);
+    pdf = rawPdf;
+    if strcmp(emptyBinMode, 'nan')
+        pdf(rawCount == 0) = NaN;
+    elseif strcmp(emptyBinMode, 'remove')
+        pdf = pdf(keptBins);
     end
 
     histData.edges = edges;
@@ -1428,7 +1664,125 @@ function histData = buildPdfHistogramData(x, nBins, binSize)
     histData.count = count;
     histData.pdf = pdf;
     histData.probability = prob;
+    histData.rawCenters = rawCenters;
+    histData.rawCount = rawCount;
+    histData.rawPdf = rawPdf;
+    histData.rawProbability = rawProb;
+    histData.keptBins = keptBins;
     histData.binSize = mean(widths);
+    histData.fit = buildDiameterFitCurves(x, histData.binSize, totalCount, fitTypes);
+end
+
+function fit = buildDiameterFitCurves(x, binWidth, totalCount, fitTypes)
+    x = x(:);
+    x = x(isfinite(x) & (x > 0));
+    fit = emptyDiameterFitStruct();
+    if isempty(x)
+        return;
+    end
+
+    xmin = min(x);
+    xmax = max(x);
+    if xmin == xmax
+        pad = max(1e-12, abs(xmin) * 1e-6);
+        fit.x = linspace(max(eps, xmin - pad), xmax + pad, 300);
+    else
+        fit.x = linspace(xmin, xmax, 300);
+    end
+
+    for i = 1:numel(fitTypes)
+        typeName = fitTypes{i};
+        pdfVals = nan(size(fit.x));
+        params = struct();
+        switch typeName
+            case 'powerlaw'
+                [pdfVals, params] = powerlawPdf(fit.x, x);
+            case 'gamma'
+                [pdfVals, params] = gammaPdfMoment(fit.x, x);
+            case 'lognormal'
+                [pdfVals, params] = lognormalPdfMoment(fit.x, x);
+        end
+        fit.(typeName) = buildFitCurveEntry(typeName, fit.x, pdfVals, params, binWidth, totalCount);
+    end
+end
+
+function fit = emptyDiameterFitStruct()
+    emptyEntry = struct('enabled', false, 'name', '', 'x', [], 'pdf', [], ...
+        'count', [], 'probability', [], 'params', struct());
+    fit = struct();
+    fit.x = [];
+    fit.powerlaw = emptyEntry;
+    fit.gamma = emptyEntry;
+    fit.lognormal = emptyEntry;
+end
+
+function entry = buildFitCurveEntry(typeName, x, pdfVals, params, binWidth, totalCount)
+    entry = struct();
+    entry.enabled = any(isfinite(pdfVals) & (pdfVals >= 0));
+    entry.name = fitDisplayName(typeName);
+    entry.x = x;
+    entry.pdf = pdfVals;
+    entry.count = pdfVals .* totalCount .* binWidth;
+    entry.probability = pdfVals .* binWidth;
+    entry.params = params;
+    entry.count(~isfinite(entry.count)) = NaN;
+    entry.probability(~isfinite(entry.probability)) = NaN;
+end
+
+function [pdfVals, params] = powerlawPdf(xGrid, xSample)
+    xmin = min(xSample);
+    params = struct('alpha', NaN, 'xmin', xmin);
+    pdfVals = nan(size(xGrid));
+    if numel(xSample) < 2 || xmin <= 0
+        return;
+    end
+
+    denom = sum(log(xSample ./ xmin));
+    if ~(isfinite(denom) && denom > 0)
+        return;
+    end
+    alpha = 1 + numel(xSample) / denom;
+    params.alpha = alpha;
+    pdfVals = zeros(size(xGrid));
+    valid = xGrid >= xmin;
+    pdfVals(valid) = (alpha - 1) .* (xmin .^ (alpha - 1)) .* (xGrid(valid) .^ (-alpha));
+end
+
+function [pdfVals, params] = gammaPdfMoment(xGrid, xSample)
+    m = mean(xSample);
+    v = var(xSample);
+    params = struct('shape', NaN, 'scale', NaN);
+    pdfVals = nan(size(xGrid));
+    if ~(isfinite(m) && isfinite(v) && m > 0 && v > 0)
+        return;
+    end
+
+    shape = (m * m) / v;
+    scale = v / m;
+    params.shape = shape;
+    params.scale = scale;
+    pdfVals = zeros(size(xGrid));
+    valid = xGrid > 0;
+    pdfVals(valid) = (xGrid(valid).^(shape - 1) .* exp(-xGrid(valid) ./ scale)) ./ ...
+        (gamma(shape) .* (scale .^ shape));
+    pdfVals(~isfinite(pdfVals)) = NaN;
+end
+
+function [pdfVals, params] = lognormalPdfMoment(xGrid, xSample)
+    lx = log(xSample);
+    mu = mean(lx);
+    sigma = std(lx);
+    params = struct('mu', mu, 'sigma', sigma);
+    pdfVals = nan(size(xGrid));
+    if ~(isfinite(mu) && isfinite(sigma) && sigma > 0)
+        return;
+    end
+
+    pdfVals = zeros(size(xGrid));
+    valid = xGrid > 0;
+    pdfVals(valid) = (1 ./ (xGrid(valid) .* sigma .* sqrt(2*pi))) .* ...
+        exp(-((log(xGrid(valid)) - mu) .^ 2) ./ (2 * sigma ^ 2));
+    pdfVals(~isfinite(pdfVals)) = NaN;
 end
 
 function net = buildPhaseSkeletonStats(phaseMask, phaseArea, dx, dy, boundary, enabled, toolbox)
@@ -1826,9 +2180,9 @@ function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN
     axis(ax, 'equal');
     axis(ax, 'tight');
     applyPlotRanges(ax, xCenters, yCenters, xRange, yRange);
-    grid(ax, 'on');
+    grid(ax, 'off');
     box(ax, 'on');
-    set(ax, 'GridAlpha', 0.12, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
+    set(ax, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
     colormap(ax, [0.75 0.75 0.75; 0.20 0.45 0.80; 0.88 0.52 0.22]);
     setAxesCLim(ax, [-1 1]);
     cb = colorbar(ax, 'Ticks', [-1, 0, 1], 'TickLabels', {'Invalid', 'Matrix', 'Pore'});
@@ -1848,9 +2202,9 @@ function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, sizeRank,
     axis(ax, 'equal');
     axis(ax, 'tight');
     applyPlotRanges(ax, xCenters, yCenters, xRange, yRange);
-    grid(ax, 'on');
+    grid(ax, 'off');
     box(ax, 'on');
-    set(ax, 'GridAlpha', 0.12, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
+    set(ax, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
     cmap = buildSizeRankColormap(numel(sizeRank.rank));
     colormap(ax, cmap);
     setAxesCLim(ax, [0 max(numel(sizeRank.rank), 1)]);
@@ -1957,8 +2311,8 @@ function drawConnectivityPanel(xCenters, yCenters, validMask, phaseMask, labelGr
     axis(ax, 'tight');
     applyPlotRanges(ax, xCenters, yCenters, xRange, yRange);
     box(ax, 'on');
-    grid(ax, 'on');
-    set(ax, 'GridAlpha', 0.10, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 11);
+    grid(ax, 'off');
+    set(ax, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 11);
     colormap(ax, [1.00 1.00 1.00; 0.77 0.84 0.93; 0.88 0.42 0.05]);
     setAxesCLim(ax, [0 2]);
     xlabel(ax, 'x', 'FontName', 'Times New Roman', 'FontSize', 12);
@@ -2007,22 +2361,103 @@ function padding = inferPlotPadding(centers)
     padding = 0.5;
 end
 
-function fig = plotCountDistribution(dist, phaseName, xRange)
+function fig = plotCountDistribution(dist, phaseName, xRange, histScale, plotStyle)
     fig = [];
     if isempty(dist.count)
         return;
     end
     fig = figure('Color', 'w', 'Name', [phaseName, ' Count Distribution']);
     ax = axes('Parent', fig);
-    bar(ax, dist.centers, dist.count, 1.0, 'FaceColor', [0.35 0.6 0.85], 'EdgeColor', 'none');
+    h = [];
+    labels = {};
+    hData = plotDistributionSeries(ax, dist.centers, dist.count, ...
+        plotStyle, [0.35 0.6 0.85]);
+    hold(ax, 'on');
+    h(end + 1) = hData;
+    labels{end + 1} = 'Count';
+    [hFit, fitLabels] = plotFitCurves(ax, dist.fit, 'count');
+    h = [h, hFit];
+    labels = [labels, fitLabels];
     xlabel(ax, 'Equivalent Diameter', 'FontName', 'Times New Roman', 'FontSize', 13);
     ylabel(ax, 'Count', 'FontName', 'Times New Roman', 'FontSize', 13);
-    title(ax, [phaseName, ' size count distribution'], ...
+    title(ax, [phaseName, ' diameter count distribution'], ...
         'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
+    if numel(h) > 1
+        legend(ax, h, labels, 'Location', 'best');
+    end
+    applyHistScale(ax, histScale);
     grid(ax, 'on');
     box(ax, 'on');
     set(ax, 'GridAlpha', 0.16, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
     applyDistributionXRange(ax, xRange, dist.centers);
+end
+
+function h = plotDistributionSeries(ax, x, y, plotStyle, color)
+    x = x(:);
+    y = y(:);
+    if isempty(x) || isempty(y)
+        h = [];
+        return;
+    end
+
+    switch plotStyle
+        case 'bar'
+            h = bar(ax, x, y, 1.0, 'FaceColor', color, 'EdgeColor', 'none');
+        case 'scatter'
+            valid = isfinite(x) & isfinite(y);
+            h = scatter(ax, x(valid), y(valid), 36, color, 'filled');
+    end
+end
+
+function [handles, labels] = plotFitCurves(ax, fit, yField)
+    handles = [];
+    labels = {};
+    if isempty(fit) || isempty(fit.x)
+        return;
+    end
+
+    types = {'powerlaw', 'gamma', 'lognormal'};
+    styles = {'k-', 'm--', 'r-'};
+    for i = 1:numel(types)
+        entry = fit.(types{i});
+        if ~entry.enabled || ~isfield(entry, yField)
+            continue;
+        end
+        y = entry.(yField);
+        valid = isfinite(entry.x) & isfinite(y) & (y >= 0);
+        if ~any(valid)
+            continue;
+        end
+        handles(end + 1) = plot(ax, entry.x(valid), y(valid), styles{i}, 'LineWidth', 1.6); %#ok<AGROW>
+        labels{end + 1} = [entry.name, ' fit']; %#ok<AGROW>
+    end
+end
+
+function applyHistScale(ax, histScale)
+    mode = lower(strtrim(histScale));
+    switch mode
+        case 'linear'
+            set(ax, 'XScale', 'linear', 'YScale', 'linear');
+        case 'semilogx'
+            set(ax, 'XScale', 'log', 'YScale', 'linear');
+        case {'semilogy', 'semilog'}
+            set(ax, 'XScale', 'linear', 'YScale', 'log');
+        case {'loglog', 'log'}
+            set(ax, 'XScale', 'log', 'YScale', 'log');
+    end
+end
+
+function name = fitDisplayName(typeName)
+    switch typeName
+        case 'powerlaw'
+            name = 'Power-law';
+        case 'gamma'
+            name = 'Gamma';
+        case 'lognormal'
+            name = 'Lognormal';
+        otherwise
+            name = typeName;
+    end
 end
 
 function applyDistributionXRange(ax, xRange, xFallback)
@@ -2168,11 +2603,7 @@ function plots = emptyPlotsStruct()
         'profileFigX', [], ...
         'profileFigY', [], ...
         'poreCountFig', [], ...
-        'poreProbFig', [], ...
-        'poreCdfFig', [], ...
         'matrixCountFig', [], ...
-        'matrixProbFig', [], ...
-        'matrixCdfFig', [], ...
         'porePositionFigX', [], ...
         'porePositionFigY', [], ...
         'matrixPositionFigX', [], ...

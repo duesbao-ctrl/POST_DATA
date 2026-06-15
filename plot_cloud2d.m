@@ -64,8 +64,8 @@ function [fig, ax, out] = plot_cloud2d(x, y, z, varargin)
     axis(ax, 'tight');
     axis(ax, 'equal');
     box(ax, 'on');
-    grid(ax, 'on');
-    set(ax, 'GridAlpha', 0.12, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
+    grid(ax, 'off');
+    set(ax, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
 
     applyNaNMode(ax, h, maskNaN, opt.NaNMode, opt.NaNColor);
 
@@ -75,15 +75,15 @@ function [fig, ax, out] = plot_cloud2d(x, y, z, varargin)
     if isempty(opt.CLim)
         v = Zs(isfinite(Zs));
         if isempty(v)
-            caxis(ax, [0 1]);
+            caxis(ax, [0 1]); %#ok<CAXIS>
         else
             vmin = min(v);
             vmax = max(v);
             if vmin == vmax
                 pad = max(1e-12, abs(vmin) * 1e-6);
-                caxis(ax, [vmin - pad, vmax + pad]);
+                caxis(ax, [vmin - pad, vmax + pad]); %#ok<CAXIS>
             else
-                caxis(ax, [vmin vmax]);
+                caxis(ax, [vmin vmax]); %#ok<CAXIS>
             end
         end
     else
@@ -91,9 +91,9 @@ function [fig, ax, out] = plot_cloud2d(x, y, z, varargin)
         cmax = opt.CLim(2);
         if cmin == cmax
             pad = max(1e-12, abs(cmin) * 1e-6);
-            caxis(ax, [cmin - pad, cmax + pad]);
+            caxis(ax, [cmin - pad, cmax + pad]); %#ok<CAXIS>
         else
-            caxis(ax, [cmin cmax]);
+            caxis(ax, [cmin cmax]); %#ok<CAXIS>
         end
     end
 
