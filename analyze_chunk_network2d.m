@@ -43,6 +43,10 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     p.addParameter('HistScale', 'linear', @isTextScalar);
     p.addParameter('MeanPowerM', 1, @isnumeric);
     p.addParameter('MeanPowerN', 0, @isnumeric);
+    p.addParameter('GeometryMode', 'cutcell', @isTextScalar);
+    p.addParameter('CutCellMethod', 'plic', @isTextScalar);
+    p.addParameter('CutCellFallback', 'binary', @isTextScalar);
+    p.addParameter('CutCellPlotRefinement', 4, @isnumeric);
     p.addParameter('EnableSkeletonGraph', false, @islogical);
     p.addParameter('EnableEvolution', false, @islogical);
     p.addParameter('EvolutionSelectBy', '', @isTextScalar);
@@ -65,6 +69,9 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     opt.DiameterPlotStyle = lower(strtrim(toChar(opt.DiameterPlotStyle)));
     opt.DiameterFitTypes = normalizeFitTypes(opt.DiameterFitTypes, 'DiameterFitTypes');
     opt.HistScale = lower(strtrim(toChar(opt.HistScale)));
+    opt.GeometryMode = normalizeGeometryMode(opt.GeometryMode);
+    opt.CutCellMethod = lower(strtrim(toChar(opt.CutCellMethod)));
+    opt.CutCellFallback = lower(strtrim(toChar(opt.CutCellFallback)));
 
     validateInputs(opt);
 
@@ -88,22 +95,22 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
 
     poreMask = validMask & (ncountGrid < opt.ThresholdN);
     matrixMask = validMask & ~poreMask;
-    phaseGrid = nan(size(ncountGrid));
-    phaseGrid(matrixMask) = 0;
-    phaseGrid(poreMask) = 1;
+    cutCell = buildCutCellGeometry(ncountGrid, validMask, poreMask, matrixMask, ...
+        xCenters, yCenters, dx, dy, opt);
+    phaseGrid = cutCell.phaseGrid;
 
-    pore = analyzePhase('pore', poreMask, validMask, xCenters, yCenters, dx, dy, opt);
-    matrix = analyzePhase('matrix', matrixMask, validMask, xCenters, yCenters, dx, dy, opt);
-    profile = buildDirectionalProfiles(poreMask, validMask, xCenters, yCenters, dx, dy, opt, pore);
+    pore = analyzePhase('pore', poreMask, validMask, xCenters, yCenters, dx, dy, opt, cutCell.pore);
+    matrix = analyzePhase('matrix', matrixMask, validMask, xCenters, yCenters, dx, dy, opt, cutCell.matrix);
+    profile = buildDirectionalProfiles(poreMask, validMask, xCenters, yCenters, dx, dy, opt, pore, cutCell);
 
     cellArea = dx * dy;
     numValidCells = nnz(validMask);
     validArea = numValidCells * cellArea;
     poreCells = nnz(poreMask);
     matrixCells = nnz(matrixMask);
-    poreArea = poreCells * cellArea;
-    matrixArea = matrixCells * cellArea;
-    interfaceLength = pore.totalInterfacePerimeter;
+    poreArea = pore.area;
+    matrixArea = matrix.area;
+    interfaceLength = cutCell.interfaceLength;
 
     globalStats = struct();
     globalStats.presentRows = presentCount;
@@ -121,18 +128,18 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     globalStats.specificInterfaceMatrix = safeDivide(interfaceLength, matrixArea);
 
     stats = buildPaperStats(globalStats, pore, matrix, poreMask, matrixMask, validMask, ...
-        xCenters, yCenters, dx, dy, step.timestep, chunkFile, opt);
+        xCenters, yCenters, dx, dy, step.timestep, chunkFile, opt, cutCell);
 
     plots = emptyPlotsStruct();
     if opt.MakePlots
         plots.phaseFig = plotPhaseGrid(xCenters, yCenters, phaseGrid, step.timestep, ...
-            opt.ThresholdN, opt.PlotRangeX, opt.PlotRangeY);
-        plots.poreLabelFig = plotLabelGrid(xCenters, yCenters, pore.labelGrid, validMask, ...
+            opt.ThresholdN, opt.PlotRangeX, opt.PlotRangeY, opt.CutCellPlotRefinement);
+        plots.poreLabelFig = plotLabelGrid(xCenters, yCenters, pore.components.ownerGrid, validMask, ...
             pore.sizeRank, sprintf('Pore Labels @ timestep %g', step.timestep), ...
-            opt.PlotRangeX, opt.PlotRangeY);
-        plots.matrixLabelFig = plotLabelGrid(xCenters, yCenters, matrix.labelGrid, validMask, ...
+            opt.PlotRangeX, opt.PlotRangeY, cutCell.pore.fraction, opt.CutCellPlotRefinement);
+        plots.matrixLabelFig = plotLabelGrid(xCenters, yCenters, matrix.components.ownerGrid, validMask, ...
             matrix.sizeRank, sprintf('Matrix Labels @ timestep %g', step.timestep), ...
-            opt.PlotRangeX, opt.PlotRangeY);
+            opt.PlotRangeX, opt.PlotRangeY, cutCell.matrix.fraction, opt.CutCellPlotRefinement);
         plots.connectivityFig = plotConnectivityHighlights(xCenters, yCenters, validMask, ...
             pore, matrix, step.timestep, opt.PlotRangeX, opt.PlotRangeY);
 
@@ -196,6 +203,8 @@ function out = analyze_chunk_network2d(chunkFile, varargin)
     out.diameterRange = opt.DiameterRange;
     out.diameterEmptyBinMode = opt.DiameterEmptyBinMode;
     out.diameterPlotStyle = opt.DiameterPlotStyle;
+    out.geometryMode = opt.GeometryMode;
+    out.cutCell = cutCell;
     out.xCenters = xCenters;
     out.yCenters = yCenters;
     out.dx = dx;
@@ -274,6 +283,40 @@ function validateInputs(opt)
     validateRangeOrEmpty(opt.ProfileRangeX, 'ProfileRangeX');
     validateRangeOrEmpty(opt.ProfileRangeY, 'ProfileRangeY');
     validateRangeOrEmpty(opt.EvolutionRange, 'EvolutionRange');
+    validateCutCellOptions(opt);
+end
+
+function validateCutCellOptions(opt)
+    validMode = {'cutcell', 'original'};
+    if ~any(strcmp(opt.GeometryMode, validMode))
+        error('analyze_chunk_network2d:BadGeometryMode', ...
+            'GeometryMode must be cutcell or original.');
+    end
+    validMethod = {'plic'};
+    if ~any(strcmp(opt.CutCellMethod, validMethod))
+        error('analyze_chunk_network2d:BadCutCellMethod', ...
+            'CutCellMethod must be plic.');
+    end
+    validFallback = {'binary', 'error'};
+    if ~any(strcmp(opt.CutCellFallback, validFallback))
+        error('analyze_chunk_network2d:BadCutCellFallback', ...
+            'CutCellFallback must be binary or error.');
+    end
+    if ~(isscalar(opt.CutCellPlotRefinement) && isnumeric(opt.CutCellPlotRefinement) && ...
+            isfinite(opt.CutCellPlotRefinement) && opt.CutCellPlotRefinement >= 1)
+        error('analyze_chunk_network2d:BadCutCellPlotRefinement', ...
+            'CutCellPlotRefinement must be a positive scalar.');
+    end
+end
+
+function mode = normalizeGeometryMode(value)
+    mode = lower(strtrim(toChar(value)));
+    switch mode
+        case {'cutcell', 'cut-cell', 'cut_cell', 'plic'}
+            mode = 'cutcell';
+        case {'original', 'binary', 'raw', 'grid', 'cell'}
+            mode = 'original';
+    end
 end
 
 function validatePositiveScalarOrEmpty(v, name)
@@ -521,13 +564,429 @@ function meta = parseFilenameMetadata(chunkFile)
     end
 end
 
-function phase = analyzePhase(name, phaseMask, validMask, xCenters, yCenters, dx, dy, opt)
+function cutCell = buildCutCellGeometry(ncountGrid, validMask, poreMask, matrixMask, ...
+        xCenters, yCenters, dx, dy, opt)
+    cellArea = dx * dy;
+    [ny, nx] = size(validMask);
+
+    cutCell = struct();
+    cutCell.geometryMode = opt.GeometryMode;
+    cutCell.enabled = strcmp(opt.GeometryMode, 'cutcell');
+    if cutCell.enabled
+        cutCell.method = opt.CutCellMethod;
+    else
+        cutCell.method = 'none';
+    end
+    cutCell.fallback = opt.CutCellFallback;
+    cutCell.plotRefinement = max(1, round(opt.CutCellPlotRefinement));
+    cutCell.note = '';
+    cutCell.fallbackCellCount = 0;
+    cutCell.interfaceLength = 0;
+    cutCell.interfaceSegmentX = zeros(0, 1);
+    cutCell.interfaceSegmentY = zeros(0, 1);
+    cutCell.interfaceSegmentLength = zeros(0, 1);
+
+    poreFraction = zeros(ny, nx);
+    poreFraction(poreMask) = 1;
+    poreFraction(~validMask) = NaN;
+    matrixFraction = zeros(ny, nx);
+    matrixFraction(matrixMask) = 1;
+    matrixFraction(~validMask) = NaN;
+
+    poreCentroidX = nan(ny, nx);
+    poreCentroidY = nan(ny, nx);
+    matrixCentroidX = nan(ny, nx);
+    matrixCentroidY = nan(ny, nx);
+    for r = 1:ny
+        for c = 1:nx
+            if validMask(r, c)
+                poreCentroidX(r, c) = xCenters(c);
+                poreCentroidY(r, c) = yCenters(r);
+                matrixCentroidX(r, c) = xCenters(c);
+                matrixCentroidY(r, c) = yCenters(r);
+            end
+        end
+    end
+
+    interfaceLengthGrid = zeros(ny, nx);
+
+    if cutCell.enabled
+        phiCenter = opt.ThresholdN - ncountGrid;
+        cornerPhi = estimateCornerPhi(phiCenter, validMask, opt.Boundary);
+        poreFraction(:) = NaN;
+        matrixFraction(:) = NaN;
+        poreCentroidX(:) = NaN;
+        poreCentroidY(:) = NaN;
+        matrixCentroidX(:) = NaN;
+        matrixCentroidY(:) = NaN;
+
+        segX = zeros(nnz(validMask) * 4, 1);
+        segY = zeros(nnz(validMask) * 4, 1);
+        segLen = zeros(nnz(validMask) * 4, 1);
+        segCount = 0;
+
+        for r = 1:ny
+            for c = 1:nx
+                if ~validMask(r, c)
+                    continue;
+                end
+                x0 = xCenters(c) - 0.5 * dx;
+                x1 = xCenters(c) + 0.5 * dx;
+                y0 = yCenters(r) - 0.5 * dy;
+                y1 = yCenters(r) + 0.5 * dy;
+                vertexXY = [ ...
+                    x0, y0; ...
+                    x1, y0; ...
+                    x1, y1; ...
+                    x0, y1];
+                vertexPhi = [ ...
+                    cornerPhi(r, c); ...
+                    cornerPhi(r, c + 1); ...
+                    cornerPhi(r + 1, c + 1); ...
+                    cornerPhi(r + 1, c)];
+                centerXY = [xCenters(c), yCenters(r)];
+                centerPhi = phiCenter(r, c);
+
+                if any(~isfinite(vertexPhi)) || ~isfinite(centerPhi)
+                    if strcmp(cutCell.fallback, 'error')
+                        error('analyze_chunk_network2d:CutCellFallbackRequired', ...
+                            'Cut-cell reconstruction needs finite center/corner values for every valid cell.');
+                    end
+                    cutCell.fallbackCellCount = cutCell.fallbackCellCount + 1;
+                    poreFraction(r, c) = double(poreMask(r, c));
+                    matrixFraction(r, c) = double(matrixMask(r, c));
+                    poreCentroidX(r, c) = xCenters(c);
+                    poreCentroidY(r, c) = yCenters(r);
+                    matrixCentroidX(r, c) = xCenters(c);
+                    matrixCentroidY(r, c) = yCenters(r);
+                    continue;
+                end
+
+                [pArea, pCx, pCy, mArea, mCx, mCy, iLen, iX, iY] = ...
+                    cutCellFromCenterCornerTriangulation(vertexXY, vertexPhi, centerXY, centerPhi);
+                poreFraction(r, c) = clamp01(pArea / cellArea);
+                matrixFraction(r, c) = clamp01(mArea / cellArea);
+                if pArea > 0
+                    poreCentroidX(r, c) = pCx;
+                    poreCentroidY(r, c) = pCy;
+                end
+                if mArea > 0
+                    matrixCentroidX(r, c) = mCx;
+                    matrixCentroidY(r, c) = mCy;
+                end
+                interfaceLengthGrid(r, c) = iLen;
+                if iLen > 0
+                    segCount = segCount + 1;
+                    if segCount > numel(segLen)
+                        segX = [segX; zeros(numel(segX), 1)]; %#ok<AGROW>
+                        segY = [segY; zeros(numel(segY), 1)]; %#ok<AGROW>
+                        segLen = [segLen; zeros(numel(segLen), 1)]; %#ok<AGROW>
+                    end
+                    segX(segCount) = iX;
+                    segY(segCount) = iY;
+                    segLen(segCount) = iLen;
+                end
+            end
+        end
+
+        cutCell.interfaceSegmentX = segX(1:segCount);
+        cutCell.interfaceSegmentY = segY(1:segCount);
+        cutCell.interfaceSegmentLength = segLen(1:segCount);
+        cutCell.interfaceLength = sum(cutCell.interfaceSegmentLength);
+        cutCell.note = ['Cut-cell geometry uses piecewise-linear interpolation of ', ...
+            'ThresholdN-Ncount over center-to-corner triangles. It changes geometric ', ...
+            'area/interface/diameter/profile estimates, not binary topology/connectivity.'];
+    else
+        cutCell.interfaceLength = computeBinaryInterfaceLength(poreMask, validMask, dx, dy, opt.Boundary);
+        cutCell.note = 'Cut-cell geometry is disabled; binary cell areas and grid-edge interface lengths are used.';
+    end
+
+    [poreFraction, matrixFraction] = normalizePhaseFractions(poreFraction, matrixFraction, validMask);
+
+    cutCell.phaseGrid = poreFraction;
+    cutCell.phaseGrid(~validMask) = NaN;
+    cutCell.pore = buildCutPhaseGeometry('pore', poreFraction, poreCentroidX, poreCentroidY, ...
+        interfaceLengthGrid, cellArea, cutCell.enabled, cutCell.note);
+    cutCell.matrix = buildCutPhaseGeometry('matrix', matrixFraction, matrixCentroidX, matrixCentroidY, ...
+        interfaceLengthGrid, cellArea, cutCell.enabled, cutCell.note);
+end
+
+function [poreFraction, matrixFraction] = normalizePhaseFractions(poreFraction, matrixFraction, validMask)
+    idx = find(validMask);
+    for i = 1:numel(idx)
+        lin = idx(i);
+        pf = poreFraction(lin);
+        mf = matrixFraction(lin);
+        if ~(isfinite(pf) && isfinite(mf))
+            continue;
+        end
+        pf = clamp01(pf);
+        mf = clamp01(mf);
+        s = pf + mf;
+        if s > 0
+            pf = pf / s;
+            mf = mf / s;
+        end
+        poreFraction(lin) = pf;
+        matrixFraction(lin) = mf;
+    end
+end
+
+function phaseGeom = buildCutPhaseGeometry(name, fraction, centroidX, centroidY, interfaceLengthGrid, ...
+        cellArea, enabled, note)
+    areaGrid = fraction .* cellArea;
+    areaGrid(~isfinite(areaGrid)) = 0;
+    phaseGeom = struct();
+    phaseGeom.name = name;
+    phaseGeom.enabled = enabled;
+    phaseGeom.note = note;
+    phaseGeom.fraction = fraction;
+    phaseGeom.areaGrid = areaGrid;
+    phaseGeom.centroidXGrid = centroidX;
+    phaseGeom.centroidYGrid = centroidY;
+    phaseGeom.interfaceLengthGrid = interfaceLengthGrid;
+end
+
+function cornerPhi = estimateCornerPhi(phiCenter, validMask, boundary)
+    [ny, nx] = size(phiCenter);
+    cornerPhi = nan(ny + 1, nx + 1);
+    for rr = 1:(ny + 1)
+        for cc = 1:(nx + 1)
+            cells = adjacentCellsForCorner(rr, cc, ny, nx, boundary);
+            vals = nan(size(cells, 1), 1);
+            n = 0;
+            for k = 1:size(cells, 1)
+                r = cells(k, 1);
+                c = cells(k, 2);
+                if r >= 1 && r <= ny && c >= 1 && c <= nx && validMask(r, c)
+                    n = n + 1;
+                    vals(n) = phiCenter(r, c);
+                end
+            end
+            if n > 0
+                cornerPhi(rr, cc) = mean(vals(1:n));
+            end
+        end
+    end
+end
+
+function cells = adjacentCellsForCorner(rr, cc, ny, nx, boundary)
+    rows = [rr - 1, rr];
+    cols = [cc - 1, cc];
+    cells = zeros(4, 2);
+    n = 0;
+    for i = 1:2
+        r = rows(i);
+        if r < 1
+            if hasPeriodicY(boundary)
+                r = ny;
+            else
+                continue;
+            end
+        elseif r > ny
+            if hasPeriodicY(boundary)
+                r = 1;
+            else
+                continue;
+            end
+        end
+        for j = 1:2
+            c = cols(j);
+            if c < 1
+                if hasPeriodicX(boundary)
+                    c = nx;
+                else
+                    continue;
+                end
+            elseif c > nx
+                if hasPeriodicX(boundary)
+                    c = 1;
+                else
+                    continue;
+                end
+            end
+            n = n + 1;
+            cells(n, :) = [r, c];
+        end
+    end
+    cells = cells(1:n, :);
+end
+
+function [pArea, pCx, pCy, mArea, mCx, mCy, iLen, iX, iY] = ...
+        cutCellFromCenterCornerTriangulation(vertexXY, vertexPhi, centerXY, centerPhi)
+    pArea = 0;
+    pMx = 0;
+    pMy = 0;
+    mArea = 0;
+    mMx = 0;
+    mMy = 0;
+    iLen = 0;
+    iMx = 0;
+    iMy = 0;
+
+    triCorner = [1 2; 2 3; 3 4; 4 1];
+    for i = 1:4
+        pts = [centerXY; vertexXY(triCorner(i, 1), :); vertexXY(triCorner(i, 2), :)];
+        vals = [centerPhi; vertexPhi(triCorner(i, 1)); vertexPhi(triCorner(i, 2))];
+        [areaPos, cxPos, cyPos] = clippedTriangleMoment(pts, vals, true);
+        [areaNeg, cxNeg, cyNeg] = clippedTriangleMoment(pts, vals, false);
+        [segLen, segX, segY] = triangleInterfaceSegment(pts, vals);
+
+        pArea = pArea + areaPos;
+        pMx = pMx + areaPos * cxPos;
+        pMy = pMy + areaPos * cyPos;
+        mArea = mArea + areaNeg;
+        mMx = mMx + areaNeg * cxNeg;
+        mMy = mMy + areaNeg * cyNeg;
+        iLen = iLen + segLen;
+        iMx = iMx + segLen * segX;
+        iMy = iMy + segLen * segY;
+    end
+
+    pCx = safeMomentCenter(pMx, pArea, centerXY(1));
+    pCy = safeMomentCenter(pMy, pArea, centerXY(2));
+    mCx = safeMomentCenter(mMx, mArea, centerXY(1));
+    mCy = safeMomentCenter(mMy, mArea, centerXY(2));
+    iX = safeMomentCenter(iMx, iLen, centerXY(1));
+    iY = safeMomentCenter(iMy, iLen, centerXY(2));
+end
+
+function [area, cx, cy] = clippedTriangleMoment(pts, vals, keepPositive)
+    polyPts = pts;
+    polyVals = vals(:);
+    [polyPts, ~] = clipScalarPolygon(polyPts, polyVals, keepPositive);
+    [area, cx, cy] = polygonAreaCentroid(polyPts);
+end
+
+function [outPts, outVals] = clipScalarPolygon(inPts, inVals, keepPositive)
+    outPts = zeros(0, 2);
+    outVals = zeros(0, 1);
+    n = size(inPts, 1);
+    if n == 0
+        return;
+    end
+
+    for i = 1:n
+        j = i + 1;
+        if j > n
+            j = 1;
+        end
+        p1 = inPts(i, :);
+        p2 = inPts(j, :);
+        v1 = inVals(i);
+        v2 = inVals(j);
+        in1 = scalarInside(v1, keepPositive);
+        in2 = scalarInside(v2, keepPositive);
+
+        if in1
+            outPts(end + 1, :) = p1; %#ok<AGROW>
+            outVals(end + 1, 1) = v1; %#ok<AGROW>
+        end
+        if xor(in1, in2)
+            t = v1 / (v1 - v2);
+            t = min(max(t, 0), 1);
+            p = p1 + t .* (p2 - p1);
+            outPts(end + 1, :) = p; %#ok<AGROW>
+            outVals(end + 1, 1) = 0; %#ok<AGROW>
+        end
+    end
+end
+
+function inside = scalarInside(v, keepPositive)
+    tol = 1e-12;
+    if keepPositive
+        inside = (v > tol);
+    else
+        inside = (v <= tol);
+    end
+end
+
+function [area, cx, cy] = polygonAreaCentroid(pts)
+    area = 0;
+    cx = NaN;
+    cy = NaN;
+    n = size(pts, 1);
+    if n < 3
+        return;
+    end
+
+    x = pts(:, 1);
+    y = pts(:, 2);
+    x2 = x([2:end, 1]);
+    y2 = y([2:end, 1]);
+    crossVal = x .* y2 - x2 .* y;
+    signedArea = 0.5 * sum(crossVal);
+    if abs(signedArea) <= eps(max(max(abs(x)), max(abs(y))) + 1)
+        return;
+    end
+    cxSigned = sum((x + x2) .* crossVal) / (6 * signedArea);
+    cySigned = sum((y + y2) .* crossVal) / (6 * signedArea);
+    area = abs(signedArea);
+    cx = cxSigned;
+    cy = cySigned;
+end
+
+function [segLen, segX, segY] = triangleInterfaceSegment(pts, vals)
+    crossPts = zeros(3, 2);
+    nCross = 0;
+    edgePair = [1 2; 2 3; 3 1];
+    for e = 1:3
+        i = edgePair(e, 1);
+        j = edgePair(e, 2);
+        v1 = vals(i);
+        v2 = vals(j);
+        if (v1 > 0 && v2 <= 0) || (v1 <= 0 && v2 > 0)
+            t = v1 / (v1 - v2);
+            t = min(max(t, 0), 1);
+            nCross = nCross + 1;
+            crossPts(nCross, :) = pts(i, :) + t .* (pts(j, :) - pts(i, :));
+        end
+    end
+
+    if nCross < 2
+        segLen = 0;
+        segX = NaN;
+        segY = NaN;
+        return;
+    end
+
+    p1 = crossPts(1, :);
+    p2 = crossPts(2, :);
+    segLen = hypot(p2(1) - p1(1), p2(2) - p1(2));
+    segX = 0.5 * (p1(1) + p2(1));
+    segY = 0.5 * (p1(2) + p2(2));
+end
+
+function value = safeMomentCenter(moment, weight, fallback)
+    if weight > 0 && isfinite(moment)
+        value = moment / weight;
+    else
+        value = fallback;
+    end
+end
+
+function value = clamp01(value)
+    value = min(max(value, 0), 1);
+end
+
+function len = computeBinaryInterfaceLength(poreMask, validMask, dx, dy, boundary)
+    [~, len] = computePerimeterForMask(poreMask, poreMask, validMask, dx, dy, boundary);
+end
+
+function phase = analyzePhase(name, phaseMask, validMask, xCenters, yCenters, dx, dy, opt, phaseGeom)
+    if nargin < 9
+        phaseGeom = [];
+    end
     [labelGrid, wrapXComp, wrapYComp] = labelConnectedComponents(phaseMask, validMask, opt.Boundary);
     numComponents = max(labelGrid(:));
     comp = computeComponentStats(labelGrid, numComponents, phaseMask, validMask, ...
-        xCenters, yCenters, dx, dy, opt.Boundary, wrapXComp, wrapYComp);
+        xCenters, yCenters, dx, dy, opt.Boundary, wrapXComp, wrapYComp, phaseGeom);
 
-    area = nnz(phaseMask) * dx * dy;
+    if isstruct(phaseGeom) && isfield(phaseGeom, 'areaGrid')
+        area = sum(phaseGeom.areaGrid(:));
+    else
+        area = nnz(phaseMask) * dx * dy;
+    end
     validArea = nnz(validMask) * dx * dy;
     largestArea = 0;
     if ~isempty(comp.area)
@@ -676,13 +1135,24 @@ function [labelGrid, wrapXComp, wrapYComp] = labelConnectedComponents(phaseMask,
 end
 
 function comp = computeComponentStats(labelGrid, numComponents, phaseMask, validMask, ...
-        xCenters, yCenters, dx, dy, boundary, wrapXComp, wrapYComp)
+        xCenters, yCenters, dx, dy, boundary, wrapXComp, wrapYComp, phaseGeom)
+    if nargin < 12
+        phaseGeom = [];
+    end
     comp = emptyComponentStats();
+    comp.ownerGrid = zeros(size(labelGrid));
     if numComponents == 0
         return;
     end
 
     [ny, nx] = size(labelGrid);
+    useCutCell = isstruct(phaseGeom) && isfield(phaseGeom, 'areaGrid') && phaseGeom.enabled;
+    if useCutCell
+        ownerGrid = buildFractionOwnerGrid(labelGrid, phaseGeom.areaGrid > 0, validMask, boundary);
+    else
+        ownerGrid = labelGrid;
+    end
+    comp.ownerGrid = ownerGrid;
     comp.label = (1:numComponents).';
     comp.cellCount = zeros(numComponents, 1);
     comp.area = zeros(numComponents, 1);
@@ -705,29 +1175,115 @@ function comp = computeComponentStats(labelGrid, numComponents, phaseMask, valid
 
     for k = 1:numComponents
         mask = (labelGrid == k);
-        [rows, cols] = find(mask);
+        ownerMask = (ownerGrid == k);
+        if ~any(ownerMask(:))
+            ownerMask = mask;
+        end
+        [rows, cols] = find(ownerMask);
+        [binaryRows, binaryCols] = find(mask);
         comp.cellCount(k) = numel(rows);
-        comp.area(k) = comp.cellCount(k) * dx * dy;
+        if useCutCell
+            areaValues = phaseGeom.areaGrid(ownerMask);
+            comp.area(k) = sum(areaValues);
+        else
+            comp.area(k) = comp.cellCount(k) * dx * dy;
+        end
         comp.equivDiameter(k) = 2 * sqrt(comp.area(k) / pi);
-        comp.centroidX(k) = mean(xCenters(cols));
-        comp.centroidY(k) = mean(yCenters(rows));
+        if useCutCell
+            [comp.centroidX(k), comp.centroidY(k)] = weightedComponentCentroid( ...
+                ownerMask, phaseGeom.areaGrid, phaseGeom.centroidXGrid, phaseGeom.centroidYGrid, ...
+                xCenters, yCenters);
+        else
+            comp.centroidX(k) = mean(xCenters(cols));
+            comp.centroidY(k) = mean(yCenters(rows));
+        end
         comp.bboxWidth(k) = (max(cols) - min(cols) + 1) * dx;
         comp.bboxHeight(k) = (max(rows) - min(rows) + 1) * dy;
 
-        comp.touchesLeft(k) = any(cols == 1);
-        comp.touchesRight(k) = any(cols == nx);
-        comp.touchesBottom(k) = any(rows == 1);
-        comp.touchesTop(k) = any(rows == ny);
+        comp.touchesLeft(k) = any(binaryCols == 1);
+        comp.touchesRight(k) = any(binaryCols == nx);
+        comp.touchesBottom(k) = any(binaryRows == 1);
+        comp.touchesTop(k) = any(binaryRows == ny);
         comp.wrapX(k) = wrapXComp(k);
         comp.wrapY(k) = wrapYComp(k);
         comp.percolatesX(k) = comp.touchesLeft(k) && comp.touchesRight(k);
         comp.percolatesY(k) = comp.touchesBottom(k) && comp.touchesTop(k);
 
-        [comp.perimeterOpen(k), comp.interfacePerimeter(k)] = ...
+        [binaryPerimeterOpen, binaryInterfacePerimeter] = ...
             computePerimeterForMask(mask, phaseMask, validMask, dx, dy, boundary);
+        comp.perimeterOpen(k) = binaryPerimeterOpen;
+        comp.interfacePerimeter(k) = binaryInterfacePerimeter;
+        if useCutCell
+            cutInterface = sum(phaseGeom.interfaceLengthGrid(ownerMask));
+            comp.interfacePerimeter(k) = cutInterface;
+            comp.perimeterOpen(k) = max(0, binaryPerimeterOpen - binaryInterfacePerimeter) + cutInterface;
+        end
         if comp.perimeterOpen(k) > 0
             comp.shapeFactor(k) = 4 * pi * comp.area(k) / (comp.perimeterOpen(k) ^ 2);
         end
+    end
+end
+
+function ownerGrid = buildFractionOwnerGrid(labelGrid, fractionMask, validMask, boundary)
+    [ny, nx] = size(labelGrid);
+    ownerGrid = zeros(ny, nx);
+    seedMask = labelGrid > 0;
+    ownerGrid(seedMask) = labelGrid(seedMask);
+    workMask = fractionMask & validMask;
+    if ~any(seedMask(:)) || ~any(workMask(:))
+        return;
+    end
+
+    maxQueue = max(1, nnz(workMask) + nnz(seedMask));
+    queue = zeros(maxQueue, 1);
+    seedLin = find(seedMask);
+    queue(1:numel(seedLin)) = seedLin;
+    head = 1;
+    tail = numel(seedLin);
+
+    while head <= tail
+        cur = queue(head);
+        head = head + 1;
+        [r, c] = ind2sub([ny, nx], cur);
+        curLabel = ownerGrid(cur);
+        for d = 1:4
+            [nr, nc, hasNeighbor, ~, ~] = neighborAt(r, c, d, ny, nx, boundary);
+            if ~hasNeighbor || ~workMask(nr, nc)
+                continue;
+            end
+            nextLin = sub2ind([ny, nx], nr, nc);
+            if ownerGrid(nextLin) ~= 0
+                continue;
+            end
+            tail = tail + 1;
+            if tail > numel(queue)
+                queue = [queue; zeros(maxQueue, 1)]; %#ok<AGROW>
+            end
+            queue(tail) = nextLin;
+            ownerGrid(nextLin) = curLabel;
+        end
+    end
+end
+
+function [cx, cy] = weightedComponentCentroid(ownerMask, areaGrid, centroidXGrid, centroidYGrid, xCenters, yCenters)
+    area = areaGrid(ownerMask);
+    cxVals = centroidXGrid(ownerMask);
+    cyVals = centroidYGrid(ownerMask);
+    valid = isfinite(area) & area > 0 & isfinite(cxVals) & isfinite(cyVals);
+    if any(valid)
+        w = area(valid);
+        cx = sum(w .* cxVals(valid)) / sum(w);
+        cy = sum(w .* cyVals(valid)) / sum(w);
+        return;
+    end
+
+    [rows, cols] = find(ownerMask);
+    if isempty(rows)
+        cx = NaN;
+        cy = NaN;
+    else
+        cx = mean(xCenters(cols));
+        cy = mean(yCenters(rows));
     end
 end
 
@@ -817,27 +1373,38 @@ function value = computeWraps(comp, axisName, boundary)
     end
 end
 
-function profiles = buildDirectionalProfiles(poreMask, validMask, xCenters, yCenters, dx, dy, opt, porePhase)
+function profiles = buildDirectionalProfiles(poreMask, validMask, xCenters, yCenters, dx, dy, opt, porePhase, cutCell)
+    if nargin < 9
+        cutCell = [];
+    end
     profiles = struct();
     if strcmp(opt.ProfileAxis, 'x') || strcmp(opt.ProfileAxis, 'both')
         profiles.x = buildDirectionalProfile(poreMask, validMask, porePhase, ...
-            xCenters, yCenters, dx, dy, 'x', round(opt.ProfileNumBins), opt);
+            xCenters, yCenters, dx, dy, 'x', round(opt.ProfileNumBins), opt, cutCell);
     end
     if strcmp(opt.ProfileAxis, 'y') || strcmp(opt.ProfileAxis, 'both')
         profiles.y = buildDirectionalProfile(poreMask, validMask, porePhase, ...
-            xCenters, yCenters, dx, dy, 'y', round(opt.ProfileNumBins), opt);
+            xCenters, yCenters, dx, dy, 'y', round(opt.ProfileNumBins), opt, cutCell);
     end
 end
 
 function profile = buildDirectionalProfile(poreMask, validMask, porePhase, ...
-        xCenters, yCenters, dx, dy, axisName, nBins, opt)
+        xCenters, yCenters, dx, dy, axisName, nBins, opt, cutCell)
+    if nargin < 11
+        cutCell = [];
+    end
     cellArea = dx * dy;
     [axisCenters, coordMin, coordMax, perpAxis, axisStep] = resolveProfileAxis(axisName, xCenters, yCenters, dx, dy);
     coordRange = getProfileRange(opt, axisName);
     edges = buildAxisEdges(coordRange, coordMin, coordMax, axisStep, nBins);
     centers = 0.5 * (edges(1:end-1) + edges(2:end));
     binIdCenter = discretize(axisCenters(:), edges);
-    interfaceLength = computeInterfaceLengthProfile(poreMask, validMask, xCenters, yCenters, dx, dy, axisName, edges);
+    useCutCell = isstruct(cutCell) && isfield(cutCell, 'enabled') && cutCell.enabled;
+    if useCutCell
+        interfaceLength = computeInterfaceLengthProfileCutCell(cutCell, axisName, edges);
+    else
+        interfaceLength = computeInterfaceLengthProfile(poreMask, validMask, xCenters, yCenters, dx, dy, axisName, edges);
+    end
 
     validArea = zeros(1, nBins);
     poreArea = zeros(1, nBins);
@@ -855,8 +1422,14 @@ function profile = buildDirectionalProfile(poreMask, validMask, porePhase, ...
 
         [poreSub, validSub] = extractSliceSubgrid(poreMask, validMask, axisName, idxAxis);
         validArea(i) = nnz(validSub) * cellArea;
-        poreArea(i) = nnz(poreSub) * cellArea;
-        matrixArea(i) = nnz(validSub & ~poreSub) * cellArea;
+        if useCutCell
+            [poreAreaSub, matrixAreaSub] = extractSliceCutCellAreas(cutCell, axisName, idxAxis);
+            poreArea(i) = sum(poreAreaSub(:));
+            matrixArea(i) = sum(matrixAreaSub(:));
+        else
+            poreArea(i) = nnz(poreSub) * cellArea;
+            matrixArea(i) = nnz(validSub & ~poreSub) * cellArea;
+        end
         porosity(i) = safeDivide(poreArea(i), validArea(i));
         specificInterfaceBulk(i) = safeDivide(interfaceLength(i), validArea(i));
         specificInterfacePore(i) = safeDivide(interfaceLength(i), poreArea(i));
@@ -1218,6 +1791,35 @@ function [centers, count, probability, keptBins] = applyEmptyBinMode(rawCenters,
     end
 end
 
+function interfaceLength = computeInterfaceLengthProfileCutCell(cutCell, axisName, edges)
+    nBins = numel(edges) - 1;
+    interfaceLength = zeros(1, nBins);
+    if isempty(cutCell.interfaceSegmentLength)
+        return;
+    end
+    if strcmp(axisName, 'x')
+        coord = cutCell.interfaceSegmentX;
+    else
+        coord = cutCell.interfaceSegmentY;
+    end
+    for i = 1:numel(cutCell.interfaceSegmentLength)
+        binId = locateBin(coord(i), edges);
+        if binId > 0
+            interfaceLength(binId) = interfaceLength(binId) + cutCell.interfaceSegmentLength(i);
+        end
+    end
+end
+
+function [poreAreaSub, matrixAreaSub] = extractSliceCutCellAreas(cutCell, axisName, idxAxis)
+    if strcmp(axisName, 'x')
+        poreAreaSub = cutCell.pore.areaGrid(:, idxAxis);
+        matrixAreaSub = cutCell.matrix.areaGrid(:, idxAxis);
+    else
+        poreAreaSub = cutCell.pore.areaGrid(idxAxis, :);
+        matrixAreaSub = cutCell.matrix.areaGrid(idxAxis, :);
+    end
+end
+
 function edges = buildHistogramEdgesFromData(x, diameterRange, binSize)
     if isempty(diameterRange)
         xmin = min(x);
@@ -1373,11 +1975,14 @@ function meanVal = momentRatioMean(x, meanPowerM, meanPowerN)
 end
 
 function stats = buildPaperStats(globalStats, pore, matrix, poreMask, matrixMask, validMask, ...
-        xCenters, yCenters, dx, dy, timestep, chunkFile, opt)
+        xCenters, yCenters, dx, dy, timestep, chunkFile, opt, cutCell)
+    if nargin < 14
+        cutCell = [];
+    end
     toolbox = detectImageToolboxAvailability();
 
     stats = struct();
-    stats.meta = buildPaperMeta(opt, dx, dy, timestep, chunkFile, xCenters, yCenters, toolbox, validMask);
+    stats.meta = buildPaperMeta(opt, dx, dy, timestep, chunkFile, xCenters, yCenters, toolbox, validMask, cutCell);
     stats.topology = struct( ...
         'pore', buildTopologyPhaseStats(pore, opt.Boundary), ...
         'matrix', buildTopologyPhaseStats(matrix, opt.Boundary));
@@ -1397,7 +2002,10 @@ function stats = buildPaperStats(globalStats, pore, matrix, poreMask, matrixMask
         'matrix', buildFragmentationStats(matrix, stats.size.matrix, stats.topology.matrix));
 end
 
-function meta = buildPaperMeta(opt, dx, dy, timestep, chunkFile, xCenters, yCenters, toolbox, validMask)
+function meta = buildPaperMeta(opt, dx, dy, timestep, chunkFile, xCenters, yCenters, toolbox, validMask, cutCell)
+    if nargin < 10
+        cutCell = [];
+    end
     meta = struct();
     meta.filePath = chunkFile;
     meta.timestep = timestep;
@@ -1410,6 +2018,7 @@ function meta = buildPaperMeta(opt, dx, dy, timestep, chunkFile, xCenters, yCent
     meta.diameterHistogramBinSize = opt.DiameterHistBinSize;
     meta.diameterEmptyBinMode = opt.DiameterEmptyBinMode;
     meta.diameterPlotStyle = opt.DiameterPlotStyle;
+    meta.cutCell = buildCutCellMeta(opt, cutCell);
     meta.coordScale = opt.CoordScale;
     meta.dx = dx;
     meta.dy = dy;
@@ -1427,6 +2036,29 @@ function meta = buildPaperMeta(opt, dx, dy, timestep, chunkFile, xCenters, yCent
             'Loops around data gaps are therefore loops of the observed topology rather than inferred material.'];
     else
         meta.missingCellNote = '';
+    end
+end
+
+function meta = buildCutCellMeta(opt, cutCell)
+    meta = struct();
+    meta.geometryMode = opt.GeometryMode;
+    meta.enabled = strcmp(opt.GeometryMode, 'cutcell');
+    meta.method = opt.CutCellMethod;
+    meta.fallback = opt.CutCellFallback;
+    meta.plotRefinement = max(1, round(opt.CutCellPlotRefinement));
+    meta.geometryFieldsAffected = ['porosity, phase area, equivalent diameter, ', ...
+        'size distribution, interface length, specific interface, profiles, and phase plotting'];
+    meta.topologyFieldsAffected = 'none; topology/connectivity still use the binary Ncount < ThresholdN mask.';
+    meta.note = '';
+    meta.fallbackCellCount = NaN;
+    if isstruct(cutCell) && isfield(cutCell, 'note')
+        meta.geometryMode = cutCell.geometryMode;
+        meta.enabled = cutCell.enabled;
+        meta.method = cutCell.method;
+        meta.fallback = cutCell.fallback;
+        meta.plotRefinement = cutCell.plotRefinement;
+        meta.note = cutCell.note;
+        meta.fallbackCellCount = cutCell.fallbackCellCount;
     end
 end
 
@@ -2063,25 +2695,27 @@ function stats = computeSnapshotPaperStats(step, chunkFile, opt)
     [dx, dy] = resolveGridSpacing(opt, chunkFile, xCenters, yCenters);
     poreMask = validMask & (ncountGrid < opt.ThresholdN);
     matrixMask = validMask & ~poreMask;
-    pore = analyzePhase('pore', poreMask, validMask, xCenters, yCenters, dx, dy, opt);
-    matrix = analyzePhase('matrix', matrixMask, validMask, xCenters, yCenters, dx, dy, opt);
+    cutCell = buildCutCellGeometry(ncountGrid, validMask, poreMask, matrixMask, ...
+        xCenters, yCenters, dx, dy, opt);
+    pore = analyzePhase('pore', poreMask, validMask, xCenters, yCenters, dx, dy, opt, cutCell.pore);
+    matrix = analyzePhase('matrix', matrixMask, validMask, xCenters, yCenters, dx, dy, opt, cutCell.matrix);
 
     cellArea = dx * dy;
     validArea = nnz(validMask) * cellArea;
-    poreArea = nnz(poreMask) * cellArea;
-    matrixArea = nnz(matrixMask) * cellArea;
+    poreArea = pore.area;
+    matrixArea = matrix.area;
     globalStats = struct();
     globalStats.validArea = validArea;
     globalStats.poreArea = poreArea;
     globalStats.matrixArea = matrixArea;
     globalStats.porosity = safeDivide(poreArea, validArea);
     globalStats.matrixFraction = safeDivide(matrixArea, validArea);
-    globalStats.interfaceLength = pore.totalInterfacePerimeter;
+    globalStats.interfaceLength = cutCell.interfaceLength;
     globalStats.specificInterfaceBulk = safeDivide(globalStats.interfaceLength, validArea);
     globalStats.specificInterfacePore = safeDivide(globalStats.interfaceLength, poreArea);
     globalStats.specificInterfaceMatrix = safeDivide(globalStats.interfaceLength, matrixArea);
     stats = buildPaperStats(globalStats, pore, matrix, poreMask, matrixMask, validMask, ...
-        xCenters, yCenters, dx, dy, step.timestep, chunkFile, opt);
+        xCenters, yCenters, dx, dy, step.timestep, chunkFile, opt, cutCell);
 end
 
 function axisName = resolveEvolutionAxis(opt)
@@ -2172,10 +2806,16 @@ function out = emptyEvolutionStats()
         'matrix', struct('deltaBeta0', [], 'deltaBeta1', [], 'deltaLargestFraction', []));
 end
 
-function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN, xRange, yRange)
+function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN, xRange, yRange, refinement)
+    if nargin < 8 || isempty(refinement)
+        refinement = 1;
+    end
     fig = figure('Color', 'w', 'Name', '2D Network Phase Map');
     ax = axes('Parent', fig);
-    imagesc(ax, xCenters, yCenters, phaseGrid);
+    [plotX, plotY, plotZ, plotAlpha] = refinePhaseGridForPlot(xCenters, yCenters, phaseGrid, refinement);
+    hImg = imagesc(ax, plotX, plotY, plotZ);
+    set(hImg, 'AlphaData', plotAlpha);
+    set(ax, 'Color', [0.72 0.72 0.72]);
     set(ax, 'YDir', 'normal');
     axis(ax, 'equal');
     axis(ax, 'tight');
@@ -2183,21 +2823,32 @@ function fig = plotPhaseGrid(xCenters, yCenters, phaseGrid, timestep, thresholdN
     grid(ax, 'off');
     box(ax, 'on');
     set(ax, 'LineWidth', 1.0, 'FontName', 'Times New Roman', 'FontSize', 12);
-    colormap(ax, [0.75 0.75 0.75; 0.20 0.45 0.80; 0.88 0.52 0.22]);
-    setAxesCLim(ax, [-1 1]);
-    cb = colorbar(ax, 'Ticks', [-1, 0, 1], 'TickLabels', {'Invalid', 'Matrix', 'Pore'});
-    ylabel(cb, 'Phase');
+    colormap(ax, buildPhaseFractionColormap());
+    setAxesCLim(ax, [0 1]);
+    cb = colorbar(ax, 'Ticks', [0, 0.5, 1], ...
+        'TickLabels', {'Matrix', 'Mixed', 'Pore'});
+    ylabel(cb, 'Pore area fraction');
     xlabel(ax, 'x', 'FontName', 'Times New Roman', 'FontSize', 13);
     ylabel(ax, 'y', 'FontName', 'Times New Roman', 'FontSize', 13);
     title(ax, sprintf('Phase map (Ncount < %g is pore) @ timestep %g', thresholdN, timestep), ...
         'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
-function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, sizeRank, ttl, xRange, yRange)
+function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, sizeRank, ttl, xRange, yRange, phaseFraction, refinement)
+    if nargin < 9
+        phaseFraction = [];
+    end
+    if nargin < 10 || isempty(refinement)
+        refinement = 1;
+    end
     fig = figure('Color', 'w', 'Name', ttl);
     ax = axes('Parent', fig);
     z = buildSizeRankLabelGrid(labelGrid, validMask, sizeRank);
-    imagesc(ax, xCenters, yCenters, z);
+    [plotX, plotY, plotZ, plotAlpha] = refineLabelGridForPlot( ...
+        xCenters, yCenters, z, validMask, phaseFraction, refinement);
+    hImg = imagesc(ax, plotX, plotY, plotZ);
+    set(hImg, 'AlphaData', plotAlpha);
+    set(ax, 'Color', [0.93 0.93 0.91]);
     set(ax, 'YDir', 'normal');
     axis(ax, 'equal');
     axis(ax, 'tight');
@@ -2214,6 +2865,99 @@ function fig = plotLabelGrid(xCenters, yCenters, labelGrid, validMask, sizeRank,
     ylabel(ax, 'y', 'FontName', 'Times New Roman', 'FontSize', 13);
     title(ax, ttl, 'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'bold');
     set(fig, 'UserData', sizeRank);
+end
+
+function [plotX, plotY, plotZ, plotAlpha] = refineLabelGridForPlot( ...
+        xCenters, yCenters, rankGrid, validMask, phaseFraction, refinement)
+    refinement = max(1, round(refinement));
+    if isempty(phaseFraction)
+        phaseFraction = double(rankGrid > 0);
+        phaseFraction(~validMask) = NaN;
+    end
+
+    plotX = xCenters;
+    plotY = yCenters;
+    plotZ = rankGrid;
+    plotZ(~isfinite(plotZ)) = 0;
+    plotAlpha = phaseFraction;
+    plotAlpha(~isfinite(plotAlpha)) = 0;
+    plotAlpha = min(max(plotAlpha, 0), 1);
+    plotAlpha = enhanceLabelAlphaForDisplay(plotAlpha);
+
+    if refinement <= 1 || numel(xCenters) < 2 || numel(yCenters) < 2
+        return;
+    end
+
+    nx = numel(xCenters);
+    ny = numel(yCenters);
+    plotX = linspace(xCenters(1), xCenters(end), (nx - 1) * refinement + 1);
+    plotY = linspace(yCenters(1), yCenters(end), (ny - 1) * refinement + 1);
+    [xGrid, yGrid] = meshgrid(xCenters, yCenters);
+    [xQuery, yQuery] = meshgrid(plotX, plotY);
+
+    rankForInterp = rankGrid;
+    rankForInterp(~isfinite(rankForInterp)) = 0;
+    plotZ = interp2(xGrid, yGrid, rankForInterp, xQuery, yQuery, 'nearest');
+    plotZ(~isfinite(plotZ)) = 0;
+
+    alphaForInterp = phaseFraction;
+    alphaForInterp(~isfinite(alphaForInterp)) = 0;
+    plotAlpha = interp2(xGrid, yGrid, alphaForInterp, xQuery, yQuery, 'linear');
+    plotAlpha(~isfinite(plotAlpha)) = 0;
+    plotAlpha = min(max(plotAlpha, 0), 1);
+    plotAlpha = enhanceLabelAlphaForDisplay(plotAlpha);
+end
+
+function alpha = enhanceLabelAlphaForDisplay(alpha)
+    visible = alpha > 0;
+    alpha(visible) = 0.18 + 0.82 .* sqrt(alpha(visible));
+    alpha(~visible) = 0;
+end
+
+function [plotX, plotY, plotZ, plotAlpha] = refinePhaseGridForPlot(xCenters, yCenters, phaseGrid, refinement)
+    refinement = max(1, round(refinement));
+    plotX = xCenters;
+    plotY = yCenters;
+    plotZ = phaseGrid;
+    plotAlpha = double(isfinite(phaseGrid));
+    plotZ(~isfinite(plotZ)) = 0;
+    if refinement <= 1 || numel(xCenters) < 2 || numel(yCenters) < 2
+        return;
+    end
+
+    nx = numel(xCenters);
+    ny = numel(yCenters);
+    plotX = linspace(xCenters(1), xCenters(end), (nx - 1) * refinement + 1);
+    plotY = linspace(yCenters(1), yCenters(end), (ny - 1) * refinement + 1);
+    [xGrid, yGrid] = meshgrid(xCenters, yCenters);
+    [xQuery, yQuery] = meshgrid(plotX, plotY);
+    valid = double(isfinite(phaseGrid));
+    z = phaseGrid;
+    z(~isfinite(z)) = 0;
+    plotZ = interp2(xGrid, yGrid, z, xQuery, yQuery, 'linear');
+    plotZ(~isfinite(plotZ)) = 0;
+    plotZ = min(max(plotZ, 0), 1);
+    plotAlpha = interp2(xGrid, yGrid, valid, xQuery, yQuery, 'linear');
+    plotAlpha = double(plotAlpha > 0.999);
+end
+
+function cmap = buildPhaseFractionColormap()
+    nPhase = 256;
+    matrixColor = [0.18 0.38 0.62];
+    mixedColor = [0.93 0.88 0.68];
+    poreColor = [0.88 0.34 0.10];
+    t = linspace(0, 1, nPhase).';
+    colors = zeros(nPhase, 3);
+    for i = 1:nPhase
+        if t(i) <= 0.5
+            a = t(i) / 0.5;
+            colors(i, :) = (1 - a) * matrixColor + a * mixedColor;
+        else
+            a = (t(i) - 0.5) / 0.5;
+            colors(i, :) = (1 - a) * mixedColor + a * poreColor;
+        end
+    end
+    cmap = colors;
 end
 
 function z = buildSizeRankLabelGrid(labelGrid, validMask, sizeRank)

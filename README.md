@@ -69,6 +69,28 @@ The module reports 2D morphology statistics for both phases, including:
 - number-size distributions and mean-size-vs-position distributions
 - directional profiles of porosity, specific interface, and perpendicular connectivity
 
+By default, `network2d` now applies a cut-cell geometric correction for
+area/interface/diameter statistics and phase-map plotting. The binary
+classification above is still the source of topology, connectivity,
+percolation, skeleton, and thickness masks. The cut-cell layer uses
+`phi = ThresholdN - Ncount` and reconstructs the zero interface inside each
+coarse chunk cell with piecewise-linear center-to-corner triangles. It does
+not create particle subcells or assume that smaller display cells contain
+particles; `CutCellPlotRefinement` only smooths the visual phase map.
+
+Use `GeometryMode` to choose the geometric statistics/plotting mode:
+
+- `GeometryMode = 'cutcell'` (default) uses the cut-cell correction
+- `GeometryMode = 'original'` uses the original strict 0/1 grid cells
+- `CutCellMethod = 'plic'` uses the piecewise-linear cut-cell reconstruction
+- `CutCellFallback = 'binary'` falls back to the original 0/1 cell if local
+  reconstruction is underdetermined; use `'error'` to fail instead
+- `CutCellPlotRefinement = 4` controls display-only interpolation of the phase map
+
+The fractional fields are returned in `out.cutCell.pore.fraction` and
+`out.cutCell.matrix.fraction`. A value between 0 and 1 means that the original
+coarse cell is cut by the reconstructed pore-matrix interface.
+
 For paper-grade analysis, the module now also exposes a unified `out.stats`
 structure that keeps the legacy outputs intact while organizing the main
 topological, geometric, and evolution metrics for downstream scripts.
@@ -81,6 +103,7 @@ topological, geometric, and evolution metrics for downstream scripts.
 - `foregroundConnectivity = 4`
 - `backgroundHoleConnectivity = 8`
 - mean definition parameters `m` and `n`
+- cut-cell settings and a note that topology/connectivity still use the binary mask
 - toolbox availability notes for skeleton/thickness paths
 
 `out.stats.topology` reports the 2D Betti numbers and Euler characteristic for
@@ -111,6 +134,10 @@ metrics for pore and matrix:
 - `interfaceLength`
 - `specificInterface = interfaceLength / validArea`
 - `poreArea`, `matrixArea`, `matrixFraction`, `validArea`
+
+When cut-cell correction is enabled, these geometry fields use the fractional
+cell areas and reconstructed interface segments. Disable it with
+`GeometryMode='original'` to recover the strict binary grid-edge estimates.
 
 `out.stats.size` stores per-component equivalent-diameter vectors and histogram
 data for both phases:

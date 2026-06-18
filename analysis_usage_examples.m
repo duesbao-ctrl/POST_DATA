@@ -64,6 +64,10 @@
 %   - 'DiameterPlotStyle' : 'bar' | 'scatter' for diameter distribution plots
 %   - 'DiameterFitTypes' : 'all'/'none' or any of powerlaw/gamma/lognormal
 %   - 'HistScale'     : 'linear' | 'semilogx' | 'semilogy' | 'loglog'
+%   - 'GeometryMode' : 'cutcell' (default) | 'original'
+%   - 'CutCellMethod' : 'plic' piecewise-linear cut-cell reconstruction
+%   - 'CutCellFallback' : 'binary' | 'error' if reconstruction is underdetermined
+%   - 'CutCellPlotRefinement' : visual-only phase-map interpolation factor
 %   - 'PositionAxis' : axis for mean-size-vs-position distributions
 %   - 'PositionRangeX/Y' : scaled centroid-coordinate ranges for position distributions
 %   - 'PlotRangeX/Y' : scaled coordinate ranges used only to crop 2D network figures
@@ -125,6 +129,10 @@ diameterEmptyBinMode = 'zero'; % 'zero' | 'nan' | 'remove'
 diameterPlotStyle = 'bar';     % 'bar' | 'scatter'
 diameterFitTypes = {'powerlaw', 'gamma', 'lognormal'};
 histScale = 'linear';        % 'linear' | 'semilogx' | 'semilogy' | 'loglog'
+geometryMode = 'cutcell';      % 'cutcell' | 'original'
+cutCellMethod = 'plic';
+cutCellFallback = 'binary';
+cutCellPlotRefinement = 4;   % display only; statistics use analytic cut cells
 dVMode = 'auto';          % 'auto' | 'manual'
 manualDV = 4.05 * 16.1443894417461 * 4.05;
 
@@ -169,6 +177,10 @@ networkOptions = {'ThresholdN', 1, ...
                   'DiameterPlotStyle', diameterPlotStyle, ...
                   'DiameterFitTypes', diameterFitTypes, ...
                   'HistScale', histScale, ...
+                  'GeometryMode', geometryMode, ...
+                  'CutCellMethod', cutCellMethod, ...
+                  'CutCellFallback', cutCellFallback, ...
+                  'CutCellPlotRefinement', cutCellPlotRefinement, ...
                   'PositionAxis', 'both', ...
                   'PositionNumBins', 20, ...
                   'PositionRangeX', rangeX, ...
@@ -301,6 +313,7 @@ if runNetwork2d
     % out_network2d.stats.connectivity.pore.largestFraction / percolatesX / percolatesY
     % out_network2d.stats.geometry.phi / interfaceLength / specificInterface
     % out_network2d.stats.size.pore.diameter / hist.diameter
+    % out_network2d.cutCell.pore.fraction / matrix.fraction
     % out_network2d.stats.network.pore.skeletonLength / branchPoints / endPoints
     % out_network2d.stats.thickness.matrix.min / mean / p1 / p5
     % out_network2d.stats.fragmentation.matrix.count / largestFraction
