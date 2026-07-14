@@ -1,0 +1,23 @@
+function output = pd_network_empty_evolution()
+%PD_NETWORK_EMPTY_EVOLUTION Stable empty evolution result schema.
+
+    output = struct();
+    output.axis = '';
+    output.axisValue = [];
+    output.stepIndex = [];
+    output.timestep = [];
+    output.time = [];
+    output.geometry = struct('phi', [], 'interfaceLength', [], 'specificInterface', []);
+    output.topology = struct( ...
+        'pore', struct('beta0', [], 'beta1', [], 'chi', []), ...
+        'matrix', struct('beta0', [], 'beta1', [], 'chi', []));
+    output.connectivity = struct( ...
+        'pore', struct('largestFraction', [], 'percolatesX', [], 'percolatesY', []), ...
+        'matrix', struct('largestFraction', [], 'percolatesX', [], 'percolatesY', []));
+    output.thickness = struct('matrix', struct('min', [], 'mean', [], 'p1', [], 'p5', []));
+    output.fragmentation = struct('matrix', struct('count', [], 'largestFraction', []));
+    output.transition = struct( ...
+        'deltaPhi', [], 'deltaSpecificInterface', [], ...
+        'pore', struct('deltaBeta0', [], 'deltaBeta1', [], 'deltaLargestFraction', []), ...
+        'matrix', struct('deltaBeta0', [], 'deltaBeta1', [], 'deltaLargestFraction', []));
+end

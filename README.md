@@ -1,329 +1,128 @@
-# POST_DATA
+# POST_DATA（非界面版）
+
+面向 LAMMPS chunk、cluster、mass-v、mass-x 和二维孔隙网络数据的 MATLAB
+后处理核心。该项目只提供脚本/API，不包含图形界面；计算、输出和绘图能力与
+`POST_DATA2` 共用同一套模块化实现，兼容 MATLAB R2016b，不使用 `+package`。
+
+## 启动与基本用法
+
+```matlab
+cd('C:\Users\Administrator\Desktop\WORKSPACE\codex\POST_DATA')
+postdata_startup
+
+request = pd_create_request('mass-x');
+request.filePath = fullfile(pwd, 'fixtures', 'generated', ...
+    'large_bin1d_dx_0.025.txt');
+request.makePlots = true;
+request.plotOptions = struct('FontName', 'Times New Roman', ...
+    'LineWidth', 1.8, 'SeriesStyleMode', 'color-and-style');
+result = postdata_run(request);
+```
+
+`postdata_run` 是唯一计算调度入口。旧脚本可继续使用 `run_analysis`，该函数现在
+只是新请求 API 的兼容包装器，不再保存第二套分析实现：
+
+```matlab
+result = run_analysis('chunk', ...
+    'BaseDir', fullfile(pwd, 'fixtures', 'sample'), ...
+    'ChunkFile', 'bin1d_strain_rate_dx_1.txt', ...
+    'ChunkDim', 'auto', 'Variable', 'strainRate', ...
+    'DoPlot', false, 'ProgressMode', 'off');
+```
+
+## 分析能力
+
+- `chunk`：自动识别一维/二维；支持原始场、温度/速度/应力等派生场、任意一维
+  场梯度以及 `du/dx + (u/rho)*d(rho)/dx` 应变率。
+- `cluster`：团簇直径、直方图/PDF/CDF、拟合、位置分箱统计；支持简单立方、
+  显式三维粒子体积和薄层准二维投影三种物理尺寸模型。
+- `mass-v`（规范类型 `vx`）：速度—面密度微分/累积分布，可修改速度列、换算
+  系数、单位、密度列和累积方向。
+- `mass-x`（规范类型 `massx`）：位置—面密度微分/累积分布，默认从大坐标向小
+  坐标累积，单位 `mg/cm^2`。
+- `network2d`：孔隙/基体几何、连通分量、数字拓扑、方向剖面、演化、PLIC
+  切割单元和可选骨架形态统计。
+
+`mass-v`、`mass_v`、`mass-vx`、`massvx` 均映射到 `vx`；`mass-x` 与
+`mass_x` 映射到 `massx`。
+
+## 论文级绘图与导出
+
+所有 `postdata_run` 独立图和 `pd_render_result` 调用共享
+`pd_plot_option_catalog`。可修改字体、字号、标题、坐标标签、LaTeX/TeX 解释器、
+线宽/线型/标记、色盲配色、自定义 RGB 色序、彩色+线型或纯黑白线型、网格、
+图例、色条、色限、坐标范围、对数轴、反向轴和等比例轴。
+
+```matlab
+request.plotOptions = struct( ...
+    'SeriesStyleMode', 'monochrome', ...
+    'TextInterpreter', 'latex', ...
+    'FontSize', 11, 'TitleFontSize', 12, ...
+    'LineWidth', 1.8, 'ShowGrid', false);
+```
+
+`pd_output_option_catalog` 支持 MAT、摘要/明细 CSV、PNG、FIG、PDF 和可复现清单；
+默认 PNG 为 300 DPI，`FigureWidthCm` 与 `FigureHeightCm` 可直接按期刊栏宽设置。
+默认输出集中到项目的 `outputs/`，多格式导出会先完整写入隔离临时目录，任一格式
+失败时不留下半成品。
+
+## 稳定性与诊断
+
+- 脚本请求与界面版共用参数目录验证，未知、重复或非法计算/绘图参数在文件读取前报错。
+- 输入预检验证首块结构、数据列数和归一化后的重复字段名。
+- 长文件索引支持取消；损坏/过期缓存自动重建，缓存采用原子替换。
+- 网络演化使用内存索引，不要求输入目录可写。
+- 运行日志超过 5 MB 自动轮换，可通过 `pd_system_diagnostics()` 检查安装与可选工具箱。
+
+```matlab
+report = pd_system_diagnostics();
+disp(report)
+```
+
+## 目录结构
+
+```text
+POST_DATA/
+  postdata_run.m              统一请求调度入口
+  run_analysis.m              旧调用方式兼容包装器
+  postdata_startup.m          路径初始化
+  src/
+    core/                     请求、参数目录、验证、日志
+    io/                       chunk/Slurm 读取、索引、输入预检
+    analysis/                 数值分析与 network2d 子模块
+    plot/                     统一论文样式和多视图渲染
+    export/                   数据和图形导出
+  examples/                   快速开始和大数据验证
+  fixtures/sample/            小型确定性回归数据
+  fixtures/generated/         一维、二维、颗粒、mass-v 大型数据
+  tests/test_postdata.m        自动化测试
+```
+
+项目中不存在 `postdata_app.m` 或 `src/app`；需要界面时启动同级 `POST_DATA2`。
 
-MATLAB post-processing helpers for chunk, cluster, and velocity analysis workflows.
+## 测试
 
-## Main entry point
-
-Use `run_analysis(taskType, ...)` as the unified interface:
-
-- `taskType = 'chunk'` for chunk field extraction and plotting
-- `taskType = 'cluster'` for cluster statistics and post-processing
-- `taskType = 'vx'` for cumulative velocity analysis
-- `taskType = 'network2d'` for pore/matrix network analysis on 2D chunk grids
+```matlab
+cd('C:\Users\Administrator\Desktop\WORKSPACE\codex\POST_DATA')
+postdata_startup
+results = runtests('tests');
+assert(numel(results) > 0, 'No tests were discovered.');
+assertSuccess(results);
+```
 
-For coordinate-based chunk and `network2d` outputs, `CoordScale` can be used
-to rescale coordinates before plotting, binning, and range filtering.
+GUI 专属的 4 个测试在本项目中会被明确标记为跳过，其余计算、读取、绘图、导出、
+大数据 `mass-v/mass-x`、梯度/应变率和物理颗粒尺寸测试与 `POST_DATA2` 相同。
 
-See `analysis_usage_examples.m` for end-to-end examples.
-
-## Read progress
-
-`read_chunk_step_fast.m` builds a `.stepidx.mat` cache on the first slow scan,
-then reuses it on later reads. Use `ProgressMode` with `run_analysis(...)`,
-`read_chunk_step_fast(...)`, or `read_bin_chunk(...)` to control progress
-display:
+大数据验证：
 
-- `auto` uses `waitbar` on desktop MATLAB and console output in batch mode
-- `off` disables progress output
-- `waitbar` forces GUI progress
-- `console` forces command-window progress
-
-## Included files
-
-- `run_analysis.m` coordinates task selection and common options
-- `read_chunk_step_fast.m` reads chunk data by index, timestep, or physical time
-- `cluster_postprocess.m` computes cluster statistics
-- `vx_chunk_cumulative.m` processes cumulative velocity outputs
-- `analyze_chunk_network2d.m` reconstructs 2D pore/matrix networks from `Ncount`
-- `selftest_generated/run_selftest.m` provides a lightweight self-test using bundled fixtures
-
-## Cluster notes
-
-`taskType='cluster'` reports equivalent-diameter statistics and distribution
-plots. Use `DiameterRange = [min max]` to choose the diameter scale window used
-by the statistics and distribution plots. Use `DiameterHistBinSize` to set the
-physical bin width of the diameter histogram; leave it empty to use an automatic
-data-driven bin width.
-`DiameterEmptyBinMode` controls empty histogram bins: `zero` keeps zero counts,
-`nan` marks empty-bin count/probability values as `NaN`, and `remove` drops
-empty bins from the plotted/statistical distribution arrays while retaining the
-raw bin fields. `DiameterPlotStyle` selects `bar` or `scatter` for the diameter
-distribution plots.
-`DiameterFitTypes` controls which fitted curves are overlaid on the distribution
-plots: `powerlaw`, `gamma`, `lognormal`, `all`, or `none`. `HistScale` controls
-the axis scaling and supports `linear`, `semilogx`, `semilogy`, and `loglog`.
-
-## Network2d notes
-
-`taskType='network2d'` classifies each valid 2D chunk cell by `Ncount < ThresholdN`:
-
-- pore: `Ncount < ThresholdN`
-- matrix: `Ncount >= ThresholdN`
-
-The module reports 2D morphology statistics for both phases, including:
-
-- porosity and matrix area fraction
-- interface length and 2D specific interface measures
-- connected-component counts, largest-component fractions, percolation/wrap flags
-- hole count and Euler characteristic for open boundaries
-- number-size distributions and mean-size-vs-position distributions
-- directional profiles of porosity, specific interface, and perpendicular connectivity
-
-By default, `network2d` now applies a cut-cell geometric correction for
-area/interface/diameter statistics and phase-map plotting. The binary
-classification above is still the source of topology, connectivity,
-percolation, skeleton, and thickness masks. The cut-cell layer uses
-`phi = ThresholdN - Ncount` and reconstructs the zero interface inside each
-coarse chunk cell with piecewise-linear center-to-corner triangles. It does
-not create particle subcells or assume that smaller display cells contain
-particles; `CutCellPlotRefinement` only smooths the visual phase map.
-
-Use `GeometryMode` to choose the geometric statistics/plotting mode:
-
-- `GeometryMode = 'cutcell'` (default) uses the cut-cell correction
-- `GeometryMode = 'original'` uses the original strict 0/1 grid cells
-- `CutCellMethod = 'plic'` uses the piecewise-linear cut-cell reconstruction
-- `CutCellFallback = 'binary'` falls back to the original 0/1 cell if local
-  reconstruction is underdetermined; use `'error'` to fail instead
-- `CutCellPlotRefinement = 4` controls display-only interpolation of the phase map
-
-The fractional fields are returned in `out.cutCell.pore.fraction` and
-`out.cutCell.matrix.fraction`. A value between 0 and 1 means that the original
-coarse cell is cut by the reconstructed pore-matrix interface.
+```matlab
+addpath('examples')
+paths = generate_large_test_data();
+report = run_large_verification();
+```
 
-For paper-grade analysis, the module now also exposes a unified `out.stats`
-structure that keeps the legacy outputs intact while organizing the main
-topological, geometric, and evolution metrics for downstream scripts.
+## 同步约束
 
-### `out.stats` overview
-
-`out.stats.meta` records the analysis convention used by the snapshot:
-
-- `boundary`
-- `foregroundConnectivity = 4`
-- `backgroundHoleConnectivity = 8`
-- mean definition parameters `m` and `n`
-- cut-cell settings and a note that topology/connectivity still use the binary mask
-- toolbox availability notes for skeleton/thickness paths
-
-`out.stats.topology` reports the 2D Betti numbers and Euler characteristic for
-both phases:
-
-- `stats.topology.pore.beta0`, `beta1`, `chi`
-- `stats.topology.matrix.beta0`, `beta1`, `chi`
-
-This version fixes the convention to foreground 4-connectivity and background
-8-connectivity for the open-boundary hole interpretation. For periodic
-boundaries the code switches to the wrapped 4-neighbor digital cell complex,
-so `beta1` is still well defined and now counts all non-trivial 1D loops of
-the wrapped structure, including both ordinary enclosed holes and periodic
-wrapping loops.
-
-`out.stats.connectivity` summarizes the publication-oriented connectivity
-metrics for pore and matrix:
-
-- `largestFraction`
-- `largestArea`
-- `componentCount`
-- `percolatesX`, `percolatesY`
-- `wrapsX`, `wrapsY` for periodic cases
-
-`out.stats.geometry` collects the core interface measures:
-
-- `phi`
-- `interfaceLength`
-- `specificInterface = interfaceLength / validArea`
-- `poreArea`, `matrixArea`, `matrixFraction`, `validArea`
-
-When cut-cell correction is enabled, these geometry fields use the fractional
-cell areas and reconstructed interface segments. Disable it with
-`GeometryMode='original'` to recover the strict binary grid-edge estimates.
-
-`out.stats.size` stores per-component equivalent-diameter vectors and histogram
-data for both phases:
-
-- `diameter = 2 * sqrt(area/pi)`
-- `hist.diameter` with `edges / centers / count / pdf`
-
-Average diameter statistics use the generalized mean
-`sum(d^m) / sum(d^n)` through `MeanPowerM` and `MeanPowerN` in
-`NetworkOptions`. The default `m=1, n=0` reduces to the arithmetic mean.
-The area-weighted mean diameter is reported separately as a fixed physical
-quantity. `DiameterRange = [min max]` selects the component diameter window used
-by size statistics, diameter histograms, and diameter distribution plots; global
-topology/connectivity/porosity are still computed from the full network.
-`DiameterHistBinSize` sets the physical histogram bin width; if it is empty, a
-data-driven bin width is used. Empty diameter bins are controlled with
-`DiameterEmptyBinMode = 'zero'`, `'nan'`, or `'remove'`; raw bin arrays remain
-available as `rawCount`, `rawProbability`, and related fields when bins are
-hidden or converted to `NaN`. Diameter distribution plots can be drawn as bars
-or scatter points with `DiameterPlotStyle`, can overlay power-law, gamma, and
-lognormal fits via `DiameterFitTypes`, and can be shown with
-`HistScale = 'linear'`, `'semilogx'`, `'semilogy'`, or `'loglog'`.
-
-`out.stats.network` and `out.stats.thickness` provide optional higher-level
-descriptors when the Image Processing Toolbox is available:
-
-- `stats.network.<phase>.skeletonLength`
-- `stats.network.<phase>.branchPoints`
-- `stats.network.<phase>.endPoints`
-- `stats.network.<phase>.branchDensity`
-- `stats.thickness.matrix.min`, `mean`, `p1`, `p5`
-
-Skeleton and thickness analysis are enabled with:
-
-- `EnableSkeletonGraph = true`
-
-If the toolbox is missing, topology/connectivity/geometry/size still work and
-the dependent fields return `NaN` together with an explanatory note.
-
-`out.stats.fragmentation.matrix` is a dedicated alias for matrix breakup:
-
-- `count`
-- `largestFraction`
-- `sizeDist`
-
-This is meant to be used directly for fragmentation-stage analysis without
-having to rebuild it from the generic topology fields.
-
-### Physical interpretation
-
-The most useful paper-level interpretation is:
-
-- `beta0`: how many disconnected pieces a phase has
-- `beta1`: how many loops / enclosed rings that phase contains
-- `chi = beta0 - beta1`: a compact topology summary
-
-Typical reading rules are:
-
-- pore coalescence: pore `beta0` decreases and pore `largestFraction` increases
-- network formation: pore `beta1` increases, often together with more branch points
-- matrix breakup: matrix `beta0` increases sharply and matrix `largestFraction` drops
-- complexification: `phi` increases while `specificInterface` also increases
-- coarsening / smoothing: `phi` increases while `specificInterface` decreases
-
-For skeleton metrics:
-
-- many `endPoints` with small `beta1` usually indicate a tree-like structure
-- large `branchPoints` together with large `beta1` usually indicate a mesh-like network
-
-For matrix thickness:
-
-- `min` is the most sensitive necking indicator
-- `p1` and `p5` are more robust low-thickness indicators than a single-point minimum
-- a drop in `min/p1/p5` is often an early warning for impending matrix rupture
-
-### Why periodic `beta1` is different from ordinary hole count
-
-Under open boundaries, a "hole" is easy to define: it is a bounded background
-region enclosed by the phase. That is why `beta1` can be counted reliably from
-the complemented image.
-
-Under periodic boundaries, the left/right and/or top/bottom edges are glued
-together. Geometrically the domain is no longer a flat rectangle with edges:
-
-- periodic in one direction behaves like a cylinder
-- periodic in both directions behaves like a torus
-
-On such wrapped domains, two different situations must be distinguished:
-
-- an ordinary enclosed hole inside the phase
-- a non-contractible loop that wraps around the periodic domain
-
-These are not the same object. A structure can cross a periodic seam and still
-have no ordinary enclosed hole, or it can wrap around the torus without
-surrounding a bounded cavity in the open-boundary sense.
-
-That is why the periodic implementation does **not** reuse the open-boundary
-"count bounded background islands" rule. Instead it computes Betti numbers on a
-wrapped digital cell complex consistent with 4-neighbor foreground topology:
-
-- 0-cells: occupied pixels
-- 1-cells: occupied horizontal/vertical adjacencies
-- 2-cells: occupied 2x2 plaquettes
-
-With that convention:
-
-- `beta0` is still the number of connected components
-- `beta1` is the rank of all 1D loops in the wrapped domain
-- `chi = beta0 - beta1 + beta2`
-
-So under periodic boundaries, `beta1` is no longer just an "ordinary hole
-count". It includes:
-
-- ordinary enclosed holes
-- loops that wrap around the periodic direction(s)
-
-Examples:
-
-- a fully occupied `periodic-x` strip behaves like a cylinder, so `beta1 = 1`
-- a fully occupied `periodic-xy` field behaves like a torus, so `beta1 = 2`
-
-This is the mathematically correct periodic interpretation and is the one used
-by `out.stats.topology.*` and the legacy `holeCount/eulerCharacteristic` fields.
-
-### Evolution scan
-
-`network2d` can optionally scan a timestep/index/time interval and append the
-result to `out.stats.evolution` while keeping the main output focused on the
-selected snapshot.
-
-Use these `NetworkOptions`:
-
-- `EnableEvolution`
-- `EvolutionSelectBy = 'Index' | 'TimeStep' | 'Time'`
-- `EvolutionRange = [min max]`
-- `EvolutionStride`
-
-The evolution output includes:
-
-- `geometry.phi`, `geometry.interfaceLength`, `geometry.specificInterface`
-- `topology.pore/matrix.beta0`, `beta1`, `chi`
-- `connectivity.pore/matrix.largestFraction`, `percolatesX`, `percolatesY`
-- `thickness.matrix.min`, `mean`, `p1`, `p5`
-- `fragmentation.matrix.count`, `largestFraction`
-- transition deltas such as `deltaPhi`, `deltaSpecificInterface`,
-  `deltaBeta0`, `deltaBeta1`, and `deltaLargestFraction`
-
-The 2D "specific surface area" is defined here as pore-matrix interface length per
-area, with bulk, pore-only, and matrix-only normalizations.
-
-Directional profiles are built from slices along a chosen axis (`ProfileAxis`,
-default `x`). The local porosity and specific-interface curves are computed from
-cells/interfaces inside the requested profile range. The connectivity curve is
-computed differently: the code first identifies globally connected pore
-components along the perpendicular direction, then assigns each connected
-component to a profile bin by its centroid. In each bin the module reports:
-
-- local porosity
-- local specific interface (bulk normalization)
-- centroid-assigned pore connectivity across the perpendicular direction
-
-`PositionAxis` and `ProfileAxis` answer different questions:
-
-- `PositionAxis` bins whole connected components by their centroids and reports
-  mean component size versus position.
-- `ProfileAxis` slices the domain spatially and reports local field-like
-  quantities such as porosity, interface density, and perpendicular
-  connectivity versus position.
-
-For periodic boundaries, note that topological loops and directional
-connectivity are not the same thing. A component may merge across a periodic
-seam without being directionally connected; `wrapsX` / `wrapsY` still require a
-true non-zero winding around the periodic domain.
-
-Coordinate ranges in `network2d` are intentionally split by purpose:
-
-- `PositionRangeX/Y` filters only the mean-size-vs-position statistics
-- `ProfileRangeX/Y` filters only the directional profile curves
-- `PlotRangeX/Y` crops only the 2D phase/label/connectivity figures
-
-This means changing `PositionRange*` or `ProfileRange*` will not zoom the 2D
-phase map. Use `PlotRangeX/Y` when you want the displayed x/y limits of the
-2D network figures to change.
-
-## Quick start
-
-1. Open MATLAB in this repository root.
-2. Review `analysis_usage_examples.m`.
-3. Run the examples or call `run_analysis(...)` directly with your case directory.
+`POST_DATA2` 是包含 GUI 的上游超集。非界面白名单通过
+`POST_DATA2/tools/sync_non_gui_to_post_data.ps1` 同步；该脚本显式排除界面目录，
+删除根目录旧重复实现和 MATLAB 临时缓存，避免两套计算代码再次漂移。
