@@ -1,0 +1,9 @@
+# retained 1D gradient and strain-rate fixture
+# five cells, one timestep
+# Chunk Coord1 Ncount c_rho v_mass v_mvx v_mvy v_mvz c_ke
+300 5 20
+1 0 1 2 1 0 0 1 0
+2 1 1 3 1 0 0 3 0
+3 2 1 4 1 0 0 5 0
+4 3 1 5 1 0 0 7 0
+5 4 1 6 1 0 0 9 0

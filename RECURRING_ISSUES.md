@@ -2,8 +2,40 @@
 
 ## Environment pitfalls
 
+- `POST_DATA2` is the GUI superset and canonical implementation; `POST_DATA` receives only the non-GUI whitelist. Before synchronization, merge any dirty original-only behavior into `POST_DATA2`, then exclude `postdata_app.m` and `src/app` explicitly.
+- `POST_DATA2` and `POST_DATA` are linked worktrees of the same Git repository, not independent repositories. Publish them on separate branches so one product variant cannot overwrite or absorb the other worktree's files.
 - On this Windows workspace, `rg.exe` may fail with `Access is denied` even when the repo is readable. When that happens, use PowerShell-native fallbacks such as `Select-String`, `Get-ChildItem`, and `Get-Content` instead of retrying `rg`.
+- In PowerShell, a top-level `foreach (...) { ... } | Sort-Object` construct can fail with `An empty pipe element is not allowed`. Wrap the loop in `@( ... )` before piping, or assign its output to a variable first.
+- On Windows, `git worktree move` can fail with `Permission denied` while the active Codex task holds the worktree as its current workspace. Create and verify a replacement worktree at the destination before attempting to remove the occupied source.
+- PowerShell `$Matches` is an automatic regex hash table and is case-insensitive, so `$matches = @()` still refers to it. Do not use that name for an array of matched line indices during mechanical rewrites.
+- Complex PowerShell strings containing nested `$((...))` command expressions are easy to leave unbalanced. Compute counts and paths into named variables before interpolating diagnostic output.
+- PowerShell `Select-String -LiteralPath` does not expand wildcards such as `tests\\*.m`. Pipe `Get-ChildItem -Filter *.m` into `Select-String`, or use `-Path` only when wildcard expansion is intended.
+- MATLAB uses `...` for line continuation, but PowerShell does not. PowerShell maintenance scripts must use complete statements, parentheses, or a trailing pipe/backtick where appropriate; never paste MATLAB ellipses into `.ps1` files.
+- This machine blocks direct `.ps1` invocation under its default execution policy. Run project maintenance scripts with `powershell -ExecutionPolicy Bypass -File <script>` as documented instead of retrying with `& script.ps1`.
+- PowerShell does not accept `Sort-Object PSIsContainer -Descending, Name`; `-Descending` cannot be attached to one property in that shorthand. Use explicit calculated-property hashtables or perform separate sorts.
+- PowerShell array literals flatten nested `@(...)` ranges in maintenance loops, which can turn a requested `[start,end]` pair into scalar values and break numeric APIs such as `[Math]::Min`. Represent source ranges as objects with explicit `Start` and `End` fields.
 
 ## Validation traps
 
+- MATLAB `print` rejects figures containing classic UI components in current releases (it requests `exportapp`, which is not R2016b-compatible). GUI verification must inspect control/axes state programmatically and render caller-owned result axes into ordinary figures for PNG checks; do not retry `print(app.Figure, ...)`.
+- Cumulative distributions must aggregate all rows sharing the same coordinate before calling `cumsum`. Sorting duplicate coordinates without aggregation produces order-dependent values at the same x/velocity and is especially easy to miss when tests only use unique 1D bins.
+- Ad-hoc `matlab -batch` checks run from the repository root still cannot see functions under `src` until `postdata_startup` is called. Every direct smoke-test command must call `postdata_startup()` before creating requests or invoking internal services.
 - In `network2d`, `PositionRangeX/Y` and `ProfileRangeX/Y` are analysis-only filters. They do not automatically crop 2D phase/label/connectivity figures unless dedicated plot-range handling is wired in.
+- `runtests('tests')` does not guarantee that the repository root or `src` folders are on the MATLAB path. Test suites must add the root and call `postdata_startup` in `setupOnce`.
+- Network fixture values depend on the complete option set (selection, boundary, geometry mode, and threshold). Refactor-contract tests should compare old and new APIs with identical options instead of reusing a hard-coded value from a different self-test scenario.
+- MATLAB `struct('field', cellValue)` expands cell elements into a struct array, and an empty cell can create an empty struct. Option catalogs with cell defaults must assign fields one by one or wrap the cell value explicitly.
+- File names do not prove that fixtures are structurally incompatible: the cluster fixture also contains `c_x/c_y/Ncount` and can validly feed network2d. Preflight rejection tests must use a file that actually lacks required columns.
+- A cut-cell test field whose threshold contour lies exactly on cell boundaries can reconstruct as entirely binary, so it cannot prove partial-cell behavior. Conservation fixtures must place the contour through cell interiors and inspect the generated fractions before fixing reference assertions.
+- A contiguous MATLAB local-function block can contain helpers used by later, unrelated functions. Before deleting an extracted block, scan every helper name across the full source; promote cross-cutting helpers to one shared file instead of copying them back.
+- Square-grid fixtures cannot detect swapped `dx`/`dy` factors. Geometry, perimeter, profile, and skeleton-length tests must include at least one anisotropic grid where column links use `dx` and row links use `dy`.
+- `summary` and `standard` result levels may intentionally prune heavy fields such as `plots`. Tests that inspect full analyzer contracts must request `resultLevel='full'` instead of treating a missing pruned field as an analyzer failure.
+- Renderer tests must account for dimensionality: a 1D chunk creates a Line while a 2D chunk creates a Scatter. Verify returned/data children rather than assuming one graphics class. MATLAB R2016b Image objects also lack `DisplayName`; use a proxy line for overlay legends.
+- MATLAB R2016b cannot directly index a function-call result such as `get(control,'Data')(:,1)`; assign the return value first. Also assert that `numel(runtests(...)) > 0`, because an excluded test file can produce an empty suite that still satisfies `assertSuccess`.
+- Modern MATLAB may return `matlab.lang.OnOffSwitchState` for graphics on/off properties while R2016b returns `char`. Cross-release UI tests should normalize these values with `char(...)` before comparison.
+- Mass-distribution fixture coordinates may start at zero even when the file has five rows. Tests must assert against the actual coordinate column, not infer `1:n` from row count.
+- The non-GUI sync excludes not only `PostDataApp` tests but also saved-GUI-configuration upgrade tests (`pd_upgrade_app_config`). Every test that touches `src/app` must carry the same explicit GUI availability assumption.
+- Cross-project hash checks must exclude generated `*.stepidx.mat` index caches. They are intentionally cleaned by synchronization and may be recreated independently by tests, so treating them as source artifacts produces false parity failures.
+- Never load a `*.stepidx.mat` sidecar as a required data source. The cache may be corrupt, stale, absent, or unwritable; the shared reader must validate/rebuild it and return the in-memory index needed by evolution code.
+- GUI/export tests must always pass an isolated temporary output directory. The application default belongs under `outputs/`; using `pwd` silently leaves timestamped MAT/CSV/PNG/manifest artifacts in the project root.
+- Programmatic requests and GUI table values must both pass through `pd_option_catalog` validation. Relying only on analyzer `inputParser` rules creates different accepted parameter sets and delays errors until after file I/O.
+- `run_large_verification` returns a compact report, not raw analyzer results. Do not assert analyzer-only fields such as `isMonotonicDecreasing` on `report.massx`; keep that invariant inside the verification script or run a separate direct request.

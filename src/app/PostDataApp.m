@@ -1,0 +1,1247 @@
+classdef PostDataApp < handle
+%POSTDATAAPP Full MATLAB R2016b-compatible POST_DATA desktop application.
+% UI orchestration only; calculation, rendering, and export are services.
+
+    properties
+        Figure
+        FileEdit
+        TaskPopup
+        SelectionPopup
+        SelectionEdit
+        SlurmEdit
+        SlurmBrowseButton
+        ProgressPopup
+        ResultLevelPopup
+        RunButton
+        CancelButton
+        StatusText
+        PlotPanel
+        PlotAxes
+        PlotViewPopup
+        PlotViewIds
+        PlotViewCountText
+        OpenSeparateFiguresCheckbox
+        PlotFigureHandles
+        PlotFigureAxes
+        PlotFigureViewIds
+        TabGroup
+        VisualizationTab
+        ComputeTab
+        ComputeHeader
+        ComputeTable
+        ParameterNameText
+        ParameterHelpText
+        ParameterEdit
+        ParameterPopup
+        ParameterCheckbox
+        ParameterApplyButton
+        SelectedParameterIndex
+        PlotTable
+        PlotPresetPopup
+        PlotParameterNameText
+        PlotParameterHelpText
+        PlotParameterEdit
+        PlotParameterPopup
+        PlotParameterCheckbox
+        PlotParameterApplyButton
+        SelectedPlotParameterIndex
+        OutputTable
+        ResultTable
+        CurrentResult
+        OptionCatalog
+        PlotCatalog
+        OutputCatalog
+        ActiveAnalysisType
+        OptionDataCache
+        CancelRequested
+    end
+
+    methods
+        function obj = PostDataApp()
+            obj.buildInterface();
+            obj.resetAllOptions();
+            obj.setStatus('①选择数据和分析类型  ②检查参数  ③运行  ④查看或导出结果');
+        end
+
+        function buildInterface(obj)
+            obj.Figure = figure('Name', 'POST_DATA2 MATLAB 后处理软件', ...
+                'NumberTitle', 'off', 'MenuBar', 'none', 'ToolBar', 'figure', ...
+                'Tag', 'POST_DATA2_MainFigure', 'Color', [0.94, 0.94, 0.94], ...
+                'Position', defaultWindowPosition());
+            set(obj.Figure, 'CloseRequestFcn', @(src, evt)obj.closeApplication(src, evt));
+            set(obj.Figure, 'WindowKeyPressFcn', @(src, evt)obj.handleShortcut(src, evt));
+            obj.buildMenus();
+
+            controls = uipanel('Parent', obj.Figure, 'Title', '数据与运行', ...
+                'Units', 'normalized', 'Position', [0.01, 0.02, 0.265, 0.96]);
+            tabs = uitabgroup('Parent', obj.Figure, 'Units', 'normalized', ...
+                'Position', [0.285, 0.02, 0.705, 0.96]);
+            obj.TabGroup = tabs;
+            plotTab = uitab('Parent', tabs, 'Title', '结果图');
+            obj.VisualizationTab = plotTab;
+            computeTab = uitab('Parent', tabs, 'Title', '计算参数');
+            obj.ComputeTab = computeTab;
+            plotOptionTab = uitab('Parent', tabs, 'Title', '绘图条件');
+            outputTab = uitab('Parent', tabs, 'Title', '输出条件');
+            resultTab = uitab('Parent', tabs, 'Title', '结果摘要');
+
+            addLabel(controls, '数据文件', 0.925);
+            obj.FileEdit = addEdit(controls, '', [0.04, 0.875, 0.55, 0.048]);
+            set(obj.FileEdit, 'TooltipString', '选择 chunk、cluster 或统计数据文件');
+            addButton(controls, '浏览', [0.61, 0.875, 0.16, 0.048], ...
+                @(src, evt)obj.browseFile(src, evt));
+            sampleButton = addButton(controls, '示例数据', [0.79, 0.875, 0.17, 0.048], ...
+                @(src, evt)obj.loadDefaultExample(src, evt));
+            set(sampleButton, 'TooltipString', '按当前分析类型载入可直接运行的测试数据');
+
+            addLabel(controls, '分析类型', 0.815);
+            obj.TaskPopup = addPopup(controls, {'chunk','network2d','cluster','vx','massx'}, ...
+                [0.04, 0.765, 0.92, 0.048], @(src, evt)obj.taskChanged(src, evt));
+
+            addLabel(controls, '时刻选择方式', 0.705);
+            obj.SelectionPopup = addPopup(controls, {'Index','TimeStep','Time'}, ...
+                [0.04, 0.655, 0.92, 0.048], @(src, evt)obj.selectionModeChanged(src, evt));
+
+            addLabel(controls, '时刻/序号', 0.595);
+            obj.SelectionEdit = addEdit(controls, '1', [0.04, 0.545, 0.92, 0.048]);
+
+            addLabel(controls, 'Slurm 文件（按物理时间选择时需要）', 0.485);
+            obj.SlurmEdit = addEdit(controls, '', [0.04, 0.435, 0.72, 0.048]);
+            obj.SlurmBrowseButton = addButton(controls, 'Browse', [0.78, 0.435, 0.18, 0.048], ...
+                @(src, evt)obj.browseSlurm(src, evt));
+
+            uicontrol('Parent', controls, 'Style', 'text', 'String', '进度显示', ...
+                'Units', 'normalized', 'Position', [0.04, 0.375, 0.44, 0.035], ...
+                'HorizontalAlignment', 'left');
+            uicontrol('Parent', controls, 'Style', 'text', 'String', '结果保留级别', ...
+                'Units', 'normalized', 'Position', [0.52, 0.375, 0.44, 0.035], ...
+                'HorizontalAlignment', 'left');
+            obj.ProgressPopup = addPopup(controls, {'auto','console','waitbar','off'}, ...
+                [0.04, 0.325, 0.44, 0.048], []);
+            obj.ResultLevelPopup = addPopup(controls, {'standard','summary','full'}, ...
+                [0.52, 0.325, 0.44, 0.048], []);
+
+            obj.RunButton = addButton(controls, '运行分析（F5）', [0.04, 0.255, 0.68, 0.058], ...
+                @(src, evt)obj.runCurrentAnalysis(src, evt));
+            set(obj.RunButton, 'FontWeight', 'bold');
+            set(obj.RunButton, 'TooltipString', '运行当前分析，完成后自动显示结果图');
+            obj.CancelButton = addButton(controls, '取消（Esc）', [0.74, 0.255, 0.22, 0.058], ...
+                @(src, evt)obj.requestCancellation(src, evt));
+            set(obj.CancelButton, 'Enable', 'off');
+            addButton(controls, '保存配置', [0.04, 0.195, 0.44, 0.045], ...
+                @(src, evt)obj.saveConfiguration(src, evt));
+            addButton(controls, '加载配置', [0.52, 0.195, 0.44, 0.045], ...
+                @(src, evt)obj.loadConfiguration(src, evt));
+            addButton(controls, '恢复默认参数', [0.04, 0.14, 0.92, 0.045], ...
+                @(src, evt)obj.resetAllOptions(src, evt));
+
+            obj.StatusText = uicontrol('Parent', controls, 'Style', 'edit', ...
+                'String', '就绪', 'Max', 3, 'Min', 0, 'Enable', 'inactive', ...
+                'HorizontalAlignment', 'left', 'Units', 'normalized', ...
+                'Position', [0.04, 0.025, 0.92, 0.10], 'BackgroundColor', 'white');
+
+            uicontrol('Parent', plotTab, 'Style', 'text', 'String', '当前视图', ...
+                'Units', 'normalized', 'Position', [0.02, 0.935, 0.08, 0.035], ...
+                'HorizontalAlignment', 'left');
+            obj.PlotViewPopup = addPopup(plotTab, {'全部视图'}, ...
+                [0.10, 0.925, 0.19, 0.05], @(src, evt)obj.replotCurrentResult(src, evt));
+            obj.PlotViewIds = {'all'};
+            obj.PlotViewCountText = uicontrol('Parent', plotTab, 'Style', 'text', ...
+                'String', '尚未运行', 'Units', 'normalized', ...
+                'Position', [0.30, 0.935, 0.09, 0.035]);
+            obj.OpenSeparateFiguresCheckbox = uicontrol('Parent', plotTab, ...
+                'Style', 'checkbox', 'String', '运行后打开独立图窗', ...
+                'Value', 1, 'Units', 'normalized', ...
+                'Position', [0.40, 0.925, 0.24, 0.05], ...
+                'TooltipString', '默认每种结果打开一个可缩放、可保存的 MATLAB 图窗');
+            addButton(plotTab, '打开全部图窗', [0.65, 0.925, 0.16, 0.05], ...
+                @(src, evt)obj.openAllPlotFigures(src, evt));
+            addButton(plotTab, '关闭独立图窗', [0.82, 0.925, 0.16, 0.05], ...
+                @(src, evt)obj.closePlotFiguresFromButton(src, evt));
+            obj.PlotFigureHandles = gobjects(1, 0);
+            obj.PlotFigureAxes = gobjects(1, 0);
+            obj.PlotFigureViewIds = {};
+            obj.PlotPanel = uipanel('Parent', plotTab, 'BorderType', 'none', ...
+                'Units', 'normalized', 'Position', [0.01, 0.11, 0.98, 0.80]);
+            obj.PlotAxes = axes('Parent', obj.PlotPanel, 'Units', 'normalized', ...
+                'Position', [0.09, 0.10, 0.84, 0.84]);
+            addButton(plotTab, '应用绘图条件并刷新', [0.36, 0.035, 0.28, 0.055], ...
+                @(src, evt)obj.replotCurrentResult(src, evt));
+
+            obj.ComputeHeader = uicontrol('Parent', computeTab, 'Style', 'text', ...
+                'String', '', 'FontWeight', 'bold', 'HorizontalAlignment', 'left', ...
+                'Units', 'normalized', 'Position', [0.02, 0.94, 0.96, 0.04]);
+            obj.ComputeTable = makeOptionTable(computeTab);
+            set(obj.ComputeTable, 'Position', [0.02, 0.31, 0.96, 0.62], ...
+                'CellSelectionCallback', @(src, evt)obj.selectComputeParameter(src, evt));
+            editorPanel = uipanel('Parent', computeTab, 'Title', '参数编辑器（选中表格行后在此修改）', ...
+                'Units', 'normalized', 'Position', [0.02, 0.02, 0.96, 0.27]);
+            obj.ParameterNameText = uicontrol('Parent', editorPanel, 'Style', 'text', ...
+                'String', '请先选择一个计算参数', 'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'left', 'Units', 'normalized', ...
+                'Position', [0.02, 0.72, 0.42, 0.20]);
+            obj.ParameterHelpText = uicontrol('Parent', editorPanel, 'Style', 'text', ...
+                'String', '', 'HorizontalAlignment', 'left', 'Units', 'normalized', ...
+                'Position', [0.02, 0.40, 0.94, 0.28]);
+            obj.ParameterEdit = addEdit(editorPanel, '', [0.02, 0.10, 0.62, 0.24]);
+            obj.ParameterPopup = addPopup(editorPanel, {' '}, [0.02, 0.10, 0.62, 0.24], []);
+            obj.ParameterCheckbox = uicontrol('Parent', editorPanel, 'Style', 'checkbox', ...
+                'String', '启用', 'Units', 'normalized', 'Position', [0.02, 0.10, 0.62, 0.24]);
+            obj.ParameterApplyButton = addButton(editorPanel, '应用参数值', ...
+                [0.70, 0.10, 0.27, 0.24], @(src, evt)obj.applySelectedParameter(src, evt));
+            set([obj.ParameterEdit,obj.ParameterPopup,obj.ParameterCheckbox], 'Visible', 'off');
+            set(obj.ParameterApplyButton, 'Enable', 'off');
+            obj.PlotTable = makeOptionTable(plotOptionTab);
+            uicontrol('Parent', plotOptionTab, 'Style', 'text', ...
+                'String', '论文样式预设', 'HorizontalAlignment', 'left', ...
+                'Units', 'normalized', 'Position', [0.02, 0.945, 0.13, 0.035]);
+            obj.PlotPresetPopup = addPopup(plotOptionTab, ...
+                {'期刊彩色','黑白打印','高对比展示','恢复默认'}, ...
+                [0.15, 0.935, 0.20, 0.05], []);
+            addButton(plotOptionTab, '应用预设', [0.37, 0.935, 0.14, 0.05], ...
+                @(src, evt)obj.applyPlotPreset(src, evt));
+            uicontrol('Parent', plotOptionTab, 'Style', 'text', ...
+                'String', '所有参数均可在表格或下方编辑器中继续微调', ...
+                'HorizontalAlignment', 'left', 'Units', 'normalized', ...
+                'Position', [0.54, 0.945, 0.43, 0.035]);
+            set(obj.PlotTable, 'Position', [0.02, 0.31, 0.96, 0.60], ...
+                'CellSelectionCallback', @(src, evt)obj.selectPlotParameter(src, evt));
+            plotEditorPanel = uipanel('Parent', plotOptionTab, ...
+                'Title', '绘图条件编辑器（修改后无需重新计算）', 'Units', 'normalized', ...
+                'Position', [0.02, 0.02, 0.96, 0.27]);
+            obj.PlotParameterNameText = uicontrol('Parent', plotEditorPanel, ...
+                'Style', 'text', 'String', '请先选择一个绘图条件', ...
+                'FontWeight', 'bold', 'HorizontalAlignment', 'left', ...
+                'Units', 'normalized', 'Position', [0.02, 0.72, 0.42, 0.20]);
+            obj.PlotParameterHelpText = uicontrol('Parent', plotEditorPanel, ...
+                'Style', 'text', 'String', '', 'HorizontalAlignment', 'left', ...
+                'Units', 'normalized', 'Position', [0.02, 0.40, 0.94, 0.28]);
+            obj.PlotParameterEdit = addEdit(plotEditorPanel, '', ...
+                [0.02, 0.10, 0.62, 0.24]);
+            obj.PlotParameterPopup = addPopup(plotEditorPanel, {' '}, ...
+                [0.02, 0.10, 0.62, 0.24], []);
+            obj.PlotParameterCheckbox = uicontrol('Parent', plotEditorPanel, ...
+                'Style', 'checkbox', 'String', '启用', 'Units', 'normalized', ...
+                'Position', [0.02, 0.10, 0.62, 0.24]);
+            obj.PlotParameterApplyButton = addButton(plotEditorPanel, ...
+                '应用绘图值', [0.70, 0.10, 0.27, 0.24], ...
+                @(src, evt)obj.applySelectedPlotParameter(src, evt));
+            set([obj.PlotParameterEdit,obj.PlotParameterPopup, ...
+                obj.PlotParameterCheckbox], 'Visible', 'off');
+            set(obj.PlotParameterApplyButton, 'Enable', 'off');
+            obj.OutputTable = makeOptionTable(outputTab);
+            set(obj.ComputeTable, 'CellEditCallback', @(src, evt)obj.validateEditableTables(src, evt));
+            set(obj.PlotTable, 'CellEditCallback', @(src, evt)obj.plotTableEdited(src, evt));
+            set(obj.OutputTable, 'CellEditCallback', @(src, evt)obj.validateEditableTables(src, evt));
+            addButton(outputTab, '选择输出目录', [0.16, 0.035, 0.25, 0.055], ...
+                @(src, evt)obj.browseOutputDirectory(src, evt));
+            addButton(outputTab, '导出当前结果', [0.58, 0.035, 0.25, 0.055], ...
+                @(src, evt)obj.exportCurrentResult(src, evt));
+
+            obj.ResultTable = uitable('Parent', resultTab, 'Units', 'normalized', ...
+                'Position', [0.02, 0.03, 0.96, 0.94], ...
+                'ColumnName', {'结果字段','数值'}, ...
+                'ColumnEditable', [false false], 'ColumnWidth', {360 260}, ...
+                'Data', cell(0, 2));
+        end
+
+        function buildMenus(obj)
+            sampleMenu = uimenu(obj.Figure, 'Label', '示例数据');
+            uimenu(sampleMenu, 'Label', '一维场（401 网格 × 3 时刻）', ...
+                'Callback', @(src, evt)obj.loadExample('chunk1d'));
+            uimenu(sampleMenu, 'Label', '二维场（61 × 41 网格 × 3 时刻）', ...
+                'Callback', @(src, evt)obj.loadExample('chunk2d'));
+            uimenu(sampleMenu, 'Label', '颗粒度/团簇（1200 个 × 3 时刻）', ...
+                'Callback', @(src, evt)obj.loadExample('cluster'));
+            uimenu(sampleMenu, 'Label', 'mass-x 累积分布', ...
+                'Callback', @(src, evt)obj.loadExample('massx'), 'Separator', 'on');
+            uimenu(sampleMenu, 'Label', '二维孔隙网络', ...
+                'Callback', @(src, evt)obj.loadExample('network2d'));
+            uimenu(sampleMenu, 'Label', 'mass-v 累积分布', ...
+                'Callback', @(src, evt)obj.loadExample('vx'));
+
+            toolsMenu = uimenu(obj.Figure, 'Label', '工具');
+            uimenu(toolsMenu, 'Label', '检查当前输入与参数', ...
+                'Callback', @(src, evt)obj.preflightCurrentInput(src, evt));
+            uimenu(toolsMenu, 'Label', '系统诊断', ...
+                'Callback', @(src, evt)obj.showSystemDiagnostics(src, evt));
+            uimenu(toolsMenu, 'Label', '打开运行日志', 'Separator', 'on', ...
+                'Callback', @(src, evt)obj.openRunLog(src, evt));
+
+            helpMenu = uimenu(obj.Figure, 'Label', '帮助');
+            uimenu(helpMenu, 'Label', '快速开始与快捷键', ...
+                'Callback', @(src, evt)obj.showQuickStart(src, evt));
+            uimenu(helpMenu, 'Label', '关于 POST_DATA2', ...
+                'Callback', @(src, evt)obj.showAbout(src, evt));
+        end
+
+        function loadDefaultExample(obj, ~, ~)
+            task = popupValue(obj.TaskPopup);
+            if strcmp(task, 'chunk')
+                data = get(obj.ComputeTable, 'Data');
+                row = find(strcmp('ChunkDim', data(:, 1)), 1, 'first');
+                if ~isempty(row) && strcmpi(strtrim(pd_to_char(data{row, 2})), '1d')
+                    kind = 'chunk1d';
+                else
+                    kind = 'chunk2d';
+                end
+            else
+                kind = task;
+            end
+            obj.loadExample(kind);
+        end
+
+        function loadExample(obj, kind)
+            rootDir = fileparts(which('postdata_app'));
+            generatedDir = fullfile(rootDir, 'fixtures', 'generated');
+            sampleDir = fullfile(rootDir, 'fixtures', 'sample');
+            switch lower(kind)
+                case 'chunk1d'
+                    task = 'chunk';
+                    filePath = fullfile(generatedDir, 'large_bin1d_dx_0.025.txt');
+                    overrides = {'ChunkDim', '1d'};
+                case 'chunk2d'
+                    task = 'chunk';
+                    filePath = fullfile(generatedDir, ...
+                        'large_bin2d_dx_0.05_dy_0.06_Lz_1.txt');
+                    overrides = {'ChunkDim', '2d'};
+                case 'cluster'
+                    task = 'cluster';
+                    filePath = fullfile(generatedDir, 'large_cluster_chunk.txt');
+                    overrides = {'Dim', 2, 'Dx', 0.025, 'MeanNumBins', 30};
+                case 'massx'
+                    task = 'massx';
+                    filePath = fullfile(generatedDir, 'large_bin1d_dx_0.025.txt');
+                    overrides = {};
+                case 'network2d'
+                    task = 'network2d';
+                    filePath = fullfile(generatedDir, ...
+                        'large_bin2d_dx_0.05_dy_0.06_Lz_1.txt');
+                    overrides = {'GeometryMode', 'original', ...
+                        'PositionAxis', 'both', 'ProfileAxis', 'both'};
+                case 'vx'
+                    task = 'vx';
+                    filePath = fullfile(sampleDir, 'vx_chunk_test.txt');
+                    overrides = {};
+                otherwise
+                    error('postdata:UnknownExample', 'Unknown example: %s', kind);
+            end
+            if ~exist(filePath, 'file')
+                error('postdata:MissingExampleData', ...
+                    'Example data is missing: %s', filePath);
+            end
+            setPopupValue(obj.TaskPopup, task);
+            obj.taskChanged([], []);
+            for i = 1:2:numel(overrides)
+                obj.setComputeOptionValue(overrides{i}, overrides{i + 1});
+            end
+            set(obj.FileEdit, 'String', filePath, 'BackgroundColor', 'white');
+            setPopupValue(obj.SelectionPopup, 'Index');
+            set(obj.SelectionEdit, 'String', '1');
+            obj.selectionModeChanged([], []);
+            set(obj.TabGroup, 'SelectedTab', obj.ComputeTab);
+            obj.setStatus(sprintf('已载入 %s 示例。可检查参数后按 F5 运行。', ...
+                analysisDescription(task)), 'success');
+        end
+
+        function setComputeOptionValue(obj, name, value)
+            data = get(obj.ComputeTable, 'Data');
+            row = find(strcmp(name, data(:, 1)), 1, 'first');
+            if isempty(row)
+                error('postdata:MissingExampleOption', ...
+                    'Example option is unavailable: %s', name);
+            end
+            data{row, 2} = pd_format_option_value(value);
+            set(obj.ComputeTable, 'Data', data);
+            obj.updateDependencyDisplay();
+        end
+
+        function showQuickStart(~, ~, ~)
+            helpdlg({'快速流程：', ...
+                '1. 选择数据文件，或从“示例数据”菜单一键载入。', ...
+                '2. 选择分析类型并在“计算参数”页检查参数。', ...
+                '3. 按 F5 运行；完成后自动切到“结果图”。', ...
+                '4. 默认同时打开每个结果的独立 MATLAB 图窗。', ...
+                '5. 在“绘图条件”和“输出条件”中调整并导出。', ...
+                '快捷键：F5 运行，Esc 取消，Ctrl+O 浏览文件，Ctrl+E 载入示例。'}, ...
+                'POST_DATA2 快速开始');
+        end
+
+        function showAbout(~, ~, ~)
+            info = pd_version();
+            helpdlg({['POST_DATA2 ', info.version], ...
+                'MATLAB 后处理软件', ...
+                ['最低兼容版本：', info.minimumMatlabRelease], ...
+                '支持 chunk、cluster、mass-v、mass-x 和 network2d。'}, ...
+                '关于 POST_DATA2');
+        end
+
+        function preflightCurrentInput(obj, ~, ~)
+            try
+                request = pd_validate_request(obj.buildRequest());
+                filePath = pd_resolve_input_file(request);
+                report = pd_preflight_input(request, filePath);
+                shown = report.variables(1:min(12, numel(report.variables)));
+                variableText = strjoin(shown, ', ');
+                if numel(report.variables) > numel(shown)
+                    variableText = sprintf('%s, ...（共 %d 列）', ...
+                        variableText, numel(report.variables));
+                end
+                helpdlg({ ...
+                    '输入与参数检查通过', ...
+                    ['文件：', report.filePath], ...
+                    sprintf('大小：%.3f MB', report.fileSize / 1024 / 1024), ...
+                    sprintf('首个时间步：%g', report.firstTimestep), ...
+                    sprintf('首块数据行：%d', report.firstBlockRows), ...
+                    ['变量：', variableText]}, 'POST_DATA2 运行前检查');
+                obj.setStatus('输入文件、分析类型和参数检查通过。', 'success');
+            catch err
+                obj.showError(err);
+            end
+        end
+
+        function showSystemDiagnostics(obj, ~, ~)
+            try
+                report = pd_system_diagnostics();
+                if report.imageProcessingToolboxAvailable
+                    imageToolboxText = '可用';
+                else
+                    imageToolboxText = '不可用（仅影响可选骨架/厚度指标）';
+                end
+                lines = { ...
+                    sprintf('POST_DATA2 %s', report.software.version), ...
+                    ['MATLAB：', report.matlabVersion], ...
+                    ['运行版本：', report.matlabRelease], ...
+                    ['项目目录：', report.projectRoot], ...
+                    ['默认输出：', report.defaultOutputDirectory], ...
+                    ['运行日志：', report.logFile], ...
+                    ['Image Processing Toolbox：', imageToolboxText]};
+                if isempty(report.warnings)
+                    lines{end + 1} = '结论：核心运行环境检查通过。';
+                    state = 'success';
+                else
+                    lines{end + 1} = '注意事项：';
+                    for i = 1:numel(report.warnings)
+                        lines{end + 1} = ['- ', report.warnings{i}]; %#ok<AGROW>
+                    end
+                    state = 'normal';
+                end
+                helpdlg(lines, 'POST_DATA2 系统诊断');
+                obj.setStatus('系统诊断已完成。', state);
+            catch err
+                obj.showError(err);
+            end
+        end
+
+        function openRunLog(obj, ~, ~)
+            filePath = pd_default_log_file();
+            if ~exist(filePath, 'file')
+                fid = fopen(filePath, 'a');
+                if fid >= 0, fclose(fid); end
+            end
+            try
+                open(filePath);
+                obj.setStatus(['已打开运行日志：', filePath]);
+            catch err
+                obj.showError(err);
+            end
+        end
+
+        function handleShortcut(obj, ~, event)
+            modifiers = event.Modifier;
+            if ischar(modifiers), modifiers = {modifiers}; end
+            controlDown = any(strcmpi(modifiers, 'control'));
+            if strcmpi(event.Key, 'f5') || ...
+                    (controlDown && strcmpi(event.Key, 'r'))
+                obj.runCurrentAnalysis([], []);
+            elseif strcmpi(event.Key, 'escape')
+                if strcmpi(char(get(obj.CancelButton, 'Enable')), 'on')
+                    obj.requestCancellation([], []);
+                end
+            elseif controlDown && strcmpi(event.Key, 'o')
+                obj.browseFile([], []);
+            elseif controlDown && strcmpi(event.Key, 'e')
+                obj.loadDefaultExample([], []);
+            end
+        end
+
+        function browseFile(obj, ~, ~)
+            initial = browseStart(get(obj.FileEdit, 'String'), '*.txt');
+            [name, folder] = uigetfile( ...
+                {'*.txt', 'POST_DATA text files (*.txt)'; '*.*', 'All files'}, ...
+                '选择 POST_DATA 数据文件', initial);
+            if isequal(name, 0), return; end
+            set(obj.FileEdit, 'String', fullfile(folder, name), 'BackgroundColor', 'white');
+            obj.setStatus('数据文件已选择，请检查分析类型和参数。');
+        end
+
+        function browseSlurm(obj, ~, ~)
+            initial = browseStart(get(obj.SlurmEdit, 'String'), '*.log');
+            [name, folder] = uigetfile( ...
+                {'*.log;*.txt', 'Slurm files'; '*.*', 'All files'}, ...
+                '选择 Slurm 日志', initial);
+            if isequal(name, 0), return; end
+            set(obj.SlurmEdit, 'String', fullfile(folder, name));
+        end
+
+        function browseOutputDirectory(obj, ~, ~)
+            current = obj.getOutputOptions();
+            folder = uigetdir(current.Directory, 'Choose output directory');
+            if isequal(folder, 0), return; end
+            data = get(obj.OutputTable, 'Data');
+            row = find(strcmp('Directory', data(:, 1)), 1, 'first');
+            data{row, 2} = folder;
+            set(obj.OutputTable, 'Data', data);
+        end
+
+        function taskChanged(obj, source, ~)
+            task = popupValue(obj.TaskPopup);
+            if ~isempty(obj.ActiveAnalysisType) && ishghandle(obj.ComputeTable)
+                obj.OptionDataCache.(obj.ActiveAnalysisType) = get(obj.ComputeTable, 'Data');
+            end
+            obj.OptionCatalog = pd_option_catalog(task);
+            if isfield(obj.OptionDataCache, task) && ...
+                    size(obj.OptionDataCache.(task), 1) == numel(obj.OptionCatalog)
+                data = obj.OptionDataCache.(task);
+            else
+                data = pd_catalog_table_data(obj.OptionCatalog);
+            end
+            set(obj.ComputeTable, 'Data', data);
+            obj.ActiveAnalysisType = task;
+            obj.SelectedParameterIndex = [];
+            obj.updateDependencyDisplay();
+            set(obj.ComputeHeader, 'String', sprintf('%s: %d editable calculation parameters', ...
+                task, numel(obj.OptionCatalog)));
+            if ~isempty(source) && ishghandle(obj.TabGroup) && ishghandle(obj.ComputeTab)
+                set(obj.TabGroup, 'SelectedTab', obj.ComputeTab);
+            end
+            obj.setStatus(sprintf('已切换到%s，共 %d 个可编辑计算参数。', ...
+                analysisDescription(task), numel(obj.OptionCatalog)));
+        end
+
+        function resetAllOptions(obj, ~, ~)
+            obj.OptionDataCache = struct();
+            obj.ActiveAnalysisType = '';
+            obj.taskChanged([], []);
+            obj.PlotCatalog = pd_plot_option_catalog();
+            set(obj.PlotTable, 'Data', pd_catalog_table_data(obj.PlotCatalog));
+            obj.SelectedPlotParameterIndex = [];
+            obj.showSelectedPlotParameter();
+            obj.OutputCatalog = pd_output_option_catalog();
+            set(obj.OutputTable, 'Data', pd_catalog_table_data(obj.OutputCatalog));
+            obj.selectionModeChanged([], []);
+        end
+
+        function runCurrentAnalysis(obj, ~, ~)
+            obj.CancelRequested = false;
+            set(obj.RunButton, 'Enable', 'off');
+            set(obj.CancelButton, 'Enable', 'on');
+            cleanupObj = onCleanup(@() obj.finishExecutionState());
+            try
+                request = obj.buildRequest();
+                obj.setStatus('正在读取数据并执行分析，请稍候……', 'busy');
+                drawnow;
+                obj.CurrentResult = postdata_run(request);
+                obj.updatePlotViewChoices();
+                obj.replotCurrentResult([], []);
+                set(obj.TabGroup, 'SelectedTab', obj.VisualizationTab);
+                summary = pd_result_summary(obj.CurrentResult);
+                set(obj.ResultTable, 'Data', summary);
+                obj.setStatus(sprintf('%s完成：timestep = %g，已生成 %d 个结果视图。', ...
+                    analysisDescription(obj.CurrentResult.analysisType), ...
+                    obj.CurrentResult.timestep, numel(pd_result_plot_views(obj.CurrentResult))), ...
+                    'success');
+                output = obj.getOutputOptions();
+                if output.AutoExport
+                    obj.exportWithOptions(output);
+                end
+            catch err
+                if strcmp(err.identifier, 'postdata:UserCancelled')
+                    obj.setStatus('分析已由用户取消。');
+                else
+                    obj.showError(err);
+                end
+            end
+        end
+
+        function request = buildRequest(obj)
+            filePath = strtrim(get(obj.FileEdit, 'String'));
+            if isempty(filePath) || ~exist(filePath, 'file')
+                set(obj.FileEdit, 'BackgroundColor', [1.0, 0.84, 0.84]);
+                error('postdata:MissingInputFile', '请选择一个存在的数据文件。');
+            end
+            set(obj.FileEdit, 'BackgroundColor', 'white');
+            selectionValue = str2double(get(obj.SelectionEdit, 'String'));
+            if ~isfinite(selectionValue)
+                error('postdata:BadSelectionValue', 'Selection value must be numeric.');
+            end
+            task = popupValue(obj.TaskPopup);
+            if ~strcmp(task, obj.ActiveAnalysisType)
+                obj.taskChanged([], []);
+            end
+            request = pd_create_request(task);
+            request.filePath = filePath;
+            request.baseDir = fileparts(filePath);
+            request.selection.mode = popupValue(obj.SelectionPopup);
+            request.selection.value = selectionValue;
+            request.selection.slurmPath = strtrim(get(obj.SlurmEdit, 'String'));
+            request.progressMode = popupValue(obj.ProgressPopup);
+            request.resultLevel = popupValue(obj.ResultLevelPopup);
+            request.makePlots = false;
+            request.plotOptions = pd_plot_options_from_table(obj.PlotCatalog, ...
+                get(obj.PlotTable, 'Data'));
+            request.execution.cancelCallback = @() obj.isCancellationRequested();
+            request.execution.progressCallback = @(fraction, message) ...
+                obj.updateExecutionProgress(fraction, message);
+            request = pd_apply_analysis_options(request, obj.OptionCatalog, ...
+                get(obj.ComputeTable, 'Data'));
+        end
+
+        function requestCancellation(obj, ~, ~)
+            obj.CancelRequested = true;
+            set(obj.CancelButton, 'Enable', 'off');
+            obj.setStatus('Cancellation requested; waiting for the current checkpoint...');
+            drawnow;
+        end
+
+        function value = isCancellationRequested(obj)
+            value = ~isempty(obj.CancelRequested) && obj.CancelRequested;
+        end
+
+        function updateExecutionProgress(obj, fraction, message)
+            obj.setStatus(sprintf('%s (%.0f%%)', message, 100 * fraction));
+            drawnow;
+        end
+
+        function finishExecutionState(obj)
+            if ishghandle(obj.RunButton), set(obj.RunButton, 'Enable', 'on'); end
+            if ishghandle(obj.CancelButton), set(obj.CancelButton, 'Enable', 'off'); end
+            obj.CancelRequested = false;
+        end
+
+        function validateEditableTables(obj, source, event)
+            try
+                if isequal(source, obj.ComputeTable) && ~isempty(event) && ~isempty(event.Indices)
+                    row = event.Indices(1);
+                    enabled = pd_catalog_enabled_mask(obj.OptionCatalog, get(obj.ComputeTable, 'Data'));
+                    if ~enabled(row)
+                        data = get(obj.ComputeTable, 'Data');
+                        data{row, 2} = event.PreviousData;
+                        set(obj.ComputeTable, 'Data', data);
+                        obj.updateDependencyDisplay();
+                        obj.setStatus('This parameter is inactive because its dependency is not enabled.');
+                        return;
+                    end
+                end
+                task = popupValue(obj.TaskPopup);
+                request = pd_create_request(task);
+                pd_apply_analysis_options(request, obj.OptionCatalog, get(obj.ComputeTable, 'Data'));
+                pd_plot_options_from_table(obj.PlotCatalog, get(obj.PlotTable, 'Data'));
+                pd_output_options_from_table(obj.OutputCatalog, get(obj.OutputTable, 'Data'));
+                if ishghandle(obj.RunButton), set(obj.RunButton, 'Enable', 'on'); end
+                obj.setStatus('Parameter syntax is valid.');
+                obj.updateDependencyDisplay();
+            catch err
+                if ishghandle(obj.RunButton), set(obj.RunButton, 'Enable', 'off'); end
+                obj.setStatus(['Invalid parameter: ', err.message]);
+            end
+        end
+
+        function selectionModeChanged(obj, ~, ~)
+            enabled = strcmpi(popupValue(obj.SelectionPopup), 'Time');
+            if enabled, state = 'on'; else, state = 'off'; end
+            set(obj.SlurmEdit, 'Enable', state);
+            set(obj.SlurmBrowseButton, 'Enable', state);
+        end
+
+        function selectComputeParameter(obj, ~, event)
+            if isempty(event.Indices), return; end
+            obj.SelectedParameterIndex = event.Indices(1);
+            obj.showSelectedParameter();
+        end
+
+        function showSelectedParameter(obj)
+            set([obj.ParameterEdit,obj.ParameterPopup,obj.ParameterCheckbox], 'Visible', 'off');
+            if isempty(obj.SelectedParameterIndex) || ...
+                    obj.SelectedParameterIndex > numel(obj.OptionCatalog)
+                set(obj.ParameterApplyButton, 'Enable', 'off');
+                return;
+            end
+            row = obj.SelectedParameterIndex;
+            meta = obj.OptionCatalog(row);
+            data = get(obj.ComputeTable, 'Data');
+            enabled = pd_catalog_enabled_mask(obj.OptionCatalog, data);
+            set(obj.ParameterNameText, 'String', sprintf('%s (%s)', meta.Name, meta.Type));
+            help = meta.Description;
+            if ~enabled(row)
+                help = sprintf('%s | Inactive until %s = %s', help, ...
+                    meta.DependsOn, pd_format_option_value(meta.DependsValue));
+            end
+            set(obj.ParameterHelpText, 'String', help);
+            if strcmp(meta.Type, 'logical')
+                value = pd_parse_option_value(data{row, 2}, meta.Type);
+                set(obj.ParameterCheckbox, 'Value', double(value), 'Visible', 'on');
+            elseif ~isempty(meta.AllowedValues)
+                labels = meta.AllowedValues;
+                labels(cellfun(@isempty, labels)) = {'<empty>'};
+                set(obj.ParameterPopup, 'String', labels, 'Visible', 'on');
+                current = data{row, 2};
+                if ~ischar(current), current = pd_format_option_value(current); end
+                index = find(strcmpi(current, meta.AllowedValues), 1, 'first');
+                if isempty(index), index = 1; end
+                set(obj.ParameterPopup, 'Value', index);
+            else
+                set(obj.ParameterEdit, 'String', data{row, 2}, 'Visible', 'on');
+            end
+            if enabled(row), state = 'on'; else, state = 'off'; end
+            set(obj.ParameterApplyButton, 'Enable', state);
+        end
+
+        function applySelectedParameter(obj, ~, ~)
+            if isempty(obj.SelectedParameterIndex), return; end
+            row = obj.SelectedParameterIndex;
+            meta = obj.OptionCatalog(row);
+            if strcmp(meta.Type, 'logical')
+                if get(obj.ParameterCheckbox, 'Value'), textValue = 'true'; else, textValue = 'false'; end
+            elseif ~isempty(meta.AllowedValues)
+                index = get(obj.ParameterPopup, 'Value');
+                textValue = meta.AllowedValues{index};
+            else
+                textValue = get(obj.ParameterEdit, 'String');
+            end
+            data = get(obj.ComputeTable, 'Data');
+            previous = data{row, 2};
+            data{row, 2} = textValue;
+            set(obj.ComputeTable, 'Data', data);
+            try
+                pd_validate_catalog_values(obj.OptionCatalog, data);
+                obj.updateDependencyDisplay();
+                obj.showSelectedParameter();
+                obj.validateEditableTables([], []);
+            catch err
+                data{row, 2} = previous;
+                set(obj.ComputeTable, 'Data', data);
+                obj.showError(err);
+            end
+        end
+
+        function selectPlotParameter(obj, ~, event)
+            if isempty(event.Indices), return; end
+            obj.SelectedPlotParameterIndex = event.Indices(1);
+            obj.showSelectedPlotParameter();
+        end
+
+        function applyPlotPreset(obj, ~, ~)
+            data = get(obj.PlotTable, 'Data');
+            preset = popupValue(obj.PlotPresetPopup);
+            switch preset
+                case '期刊彩色'
+                    values = {'ColorPalette','colorblind'; ...
+                        'SeriesStyleMode','color-and-style'; 'FontName','Times New Roman'; ...
+                        'FontSize',11; 'TitleFontSize',12; 'TitleWeight','normal'; ...
+                        'LineWidth',1.8; 'AxisLineWidth',1.0; 'MarkerSymbol','none'; ...
+                        'ShowGrid',false; 'ShowMinorGrid',false; 'BoxOn',true; ...
+                        'TickDirection','out'; 'LegendBox',false};
+                case '黑白打印'
+                    values = {'ColorPalette','grayscale'; ...
+                        'SeriesStyleMode','monochrome'; 'FontName','Times New Roman'; ...
+                        'FontSize',11; 'TitleFontSize',12; 'LineWidth',1.8; ...
+                        'MarkerSymbol','none'; 'ShowGrid',false; 'BoxOn',true; ...
+                        'TickDirection','out'; 'LegendBox',false};
+                case '高对比展示'
+                    values = {'ColorPalette','highcontrast'; ...
+                        'SeriesStyleMode','color-and-style'; 'FontName','Arial'; ...
+                        'FontSize',14; 'TitleFontSize',16; 'TitleWeight','bold'; ...
+                        'LineWidth',2.4; 'MarkerSymbol','o'; 'MarkerSize',7; ...
+                        'ShowGrid',true; 'GridAlpha',0.22};
+                otherwise
+                    data = pd_catalog_table_data(obj.PlotCatalog);
+                    set(obj.PlotTable, 'Data', data);
+                    obj.refreshPlotAppearance();
+                    return;
+            end
+            for i = 1:size(values, 1)
+                data = replaceTableOption(data, values{i, 1}, values{i, 2});
+            end
+            pd_plot_options_from_table(obj.PlotCatalog, data);
+            set(obj.PlotTable, 'Data', data);
+            obj.showSelectedPlotParameter();
+            obj.refreshPlotAppearance();
+        end
+
+        function showSelectedPlotParameter(obj)
+            set([obj.PlotParameterEdit,obj.PlotParameterPopup, ...
+                obj.PlotParameterCheckbox], 'Visible', 'off');
+            if isempty(obj.SelectedPlotParameterIndex) || ...
+                    obj.SelectedPlotParameterIndex > numel(obj.PlotCatalog)
+                set(obj.PlotParameterApplyButton, 'Enable', 'off');
+                return;
+            end
+            row = obj.SelectedPlotParameterIndex;
+            meta = obj.PlotCatalog(row);
+            data = get(obj.PlotTable, 'Data');
+            set(obj.PlotParameterNameText, 'String', ...
+                sprintf('%s (%s)', meta.Name, meta.Type));
+            set(obj.PlotParameterHelpText, 'String', meta.Description);
+            if strcmp(meta.Type, 'logical')
+                value = pd_parse_option_value(data{row, 2}, meta.Type);
+                set(obj.PlotParameterCheckbox, 'Value', double(value), ...
+                    'Visible', 'on');
+            elseif ~isempty(meta.AllowedValues)
+                set(obj.PlotParameterPopup, 'String', meta.AllowedValues, ...
+                    'Visible', 'on');
+                current = data{row, 2};
+                if ~ischar(current), current = pd_format_option_value(current); end
+                index = find(strcmpi(current, meta.AllowedValues), 1, 'first');
+                if isempty(index), index = 1; end
+                set(obj.PlotParameterPopup, 'Value', index);
+            else
+                set(obj.PlotParameterEdit, 'String', data{row, 2}, 'Visible', 'on');
+            end
+            set(obj.PlotParameterApplyButton, 'Enable', 'on');
+        end
+
+        function applySelectedPlotParameter(obj, ~, ~)
+            if isempty(obj.SelectedPlotParameterIndex), return; end
+            row = obj.SelectedPlotParameterIndex;
+            meta = obj.PlotCatalog(row);
+            if strcmp(meta.Type, 'logical')
+                if get(obj.PlotParameterCheckbox, 'Value')
+                    textValue = 'true';
+                else
+                    textValue = 'false';
+                end
+            elseif ~isempty(meta.AllowedValues)
+                index = get(obj.PlotParameterPopup, 'Value');
+                textValue = meta.AllowedValues{index};
+            else
+                textValue = get(obj.PlotParameterEdit, 'String');
+            end
+            data = get(obj.PlotTable, 'Data');
+            previous = data{row, 2};
+            data{row, 2} = textValue;
+            set(obj.PlotTable, 'Data', data);
+            try
+                pd_plot_options_from_table(obj.PlotCatalog, data);
+                obj.showSelectedPlotParameter();
+                obj.validateEditableTables([], []);
+                obj.refreshPlotAppearance();
+            catch err
+                data{row, 2} = previous;
+                set(obj.PlotTable, 'Data', data);
+                obj.showError(err);
+            end
+        end
+
+        function plotTableEdited(obj, source, event)
+            try
+                pd_plot_options_from_table(obj.PlotCatalog, get(obj.PlotTable, 'Data'));
+                obj.validateEditableTables(source, event);
+                obj.refreshPlotAppearance();
+            catch err
+                if ~isempty(event) && ~isempty(event.Indices)
+                    data = get(obj.PlotTable, 'Data');
+                    data{event.Indices(1), event.Indices(2)} = event.PreviousData;
+                    set(obj.PlotTable, 'Data', data);
+                end
+                obj.showError(err);
+            end
+        end
+
+        function refreshPlotAppearance(obj)
+            if isempty(obj.CurrentResult), return; end
+            options = pd_plot_options_from_table(obj.PlotCatalog, ...
+                get(obj.PlotTable, 'Data'));
+            validAxes = obj.PlotAxes(ishghandle(obj.PlotAxes));
+            if ~isempty(validAxes), pd_apply_publication_style(validAxes, options); end
+            validSeparate = obj.PlotFigureAxes(ishghandle(obj.PlotFigureAxes));
+            if ~isempty(validSeparate)
+                pd_apply_publication_style(validSeparate, options);
+            end
+            drawnow;
+            obj.setStatus('绘图条件已立即应用，无需重新计算。', 'success');
+        end
+
+        function updateDependencyDisplay(obj)
+            if isempty(obj.OptionCatalog), return; end
+            data = get(obj.ComputeTable, 'Data');
+            if size(data, 1) ~= numel(obj.OptionCatalog), return; end
+            enabled = pd_catalog_enabled_mask(obj.OptionCatalog, data);
+            for i = 1:numel(obj.OptionCatalog)
+                description = obj.OptionCatalog(i).Description;
+                if ~enabled(i)
+                    description = sprintf('[inactive: %s=%s] %s', ...
+                        obj.OptionCatalog(i).DependsOn, ...
+                        pd_format_option_value(obj.OptionCatalog(i).DependsValue), description);
+                end
+                data{i, 3} = description;
+            end
+            set(obj.ComputeTable, 'Data', data);
+            if ~isempty(obj.SelectedParameterIndex), obj.showSelectedParameter(); end
+        end
+
+        function replotCurrentResult(obj, ~, ~)
+            if isempty(obj.CurrentResult)
+                return;
+            end
+            try
+                options = pd_plot_options_from_table(obj.PlotCatalog, get(obj.PlotTable, 'Data'));
+                popupIndex = get(obj.PlotViewPopup, 'Value');
+                viewId = obj.PlotViewIds{popupIndex};
+                views = pd_result_plot_views(obj.CurrentResult);
+                if strcmp(viewId, 'all')
+                    viewIds = {views.Id};
+                else
+                    viewIds = {viewId};
+                end
+                obj.preparePlotAxes(viewIds, options.UpdateMode);
+                for i = 1:numel(viewIds)
+                    pd_render_result(obj.PlotAxes(i), obj.CurrentResult, options, viewIds{i});
+                end
+                if get(obj.OpenSeparateFiguresCheckbox, 'Value') || ...
+                        obj.hasAnySeparateFigures()
+                    obj.renderSeparateFigures(options, false);
+                end
+                drawnow;
+            catch err
+                obj.showError(err);
+            end
+        end
+
+        function updatePlotViewChoices(obj)
+            views = pd_result_plot_views(obj.CurrentResult);
+            labels = [{'全部视图'}, {views.Label}];
+            obj.PlotViewIds = [{'all'}, {views.Id}];
+            set(obj.PlotViewPopup, 'String', labels, 'Value', 1);
+            set(obj.PlotViewCountText, 'String', sprintf('共 %d 幅', numel(views)));
+        end
+
+        function preparePlotAxes(obj, viewIds, updateMode)
+            reuse = strcmpi(updateMode, 'overlay') && ...
+                numel(obj.PlotAxes) == numel(viewIds) && ...
+                all(ishghandle(obj.PlotAxes));
+            if reuse
+                for i = 1:numel(viewIds)
+                    reuse = reuse && strcmp(get(obj.PlotAxes(i), 'Tag'), ...
+                        ['POST_DATA2_View_', viewIds{i}]);
+                end
+            end
+            if reuse, return; end
+            delete(get(obj.PlotPanel, 'Children'));
+            count = numel(viewIds);
+            [rows, columns] = pd_subplot_grid(count);
+            gapX = 0.055;
+            gapY = 0.075;
+            marginX = 0.055;
+            marginY = 0.075;
+            width = (1 - 2 * marginX - (columns - 1) * gapX) / columns;
+            height = (1 - 2 * marginY - (rows - 1) * gapY) / rows;
+            axesList = gobjects(1, count);
+            for i = 1:count
+                row = floor((i - 1) / columns);
+                column = mod(i - 1, columns);
+                left = marginX + column * (width + gapX);
+                bottom = 1 - marginY - (row + 1) * height - row * gapY;
+                axesList(i) = axes('Parent', obj.PlotPanel, 'Units', 'normalized', ...
+                    'Position', [left, bottom, width, height], ...
+                    'Tag', ['POST_DATA2_View_', viewIds{i}]);
+            end
+            obj.PlotAxes = axesList;
+        end
+
+        function openAllPlotFigures(obj, ~, ~)
+            if isempty(obj.CurrentResult)
+                obj.showError('Run an analysis before opening result figures.');
+                return;
+            end
+            try
+                options = pd_plot_options_from_table(obj.PlotCatalog, ...
+                    get(obj.PlotTable, 'Data'));
+                obj.renderSeparateFigures(options, true);
+                obj.setStatus(sprintf('Opened %d separate result figures.', ...
+                    numel(obj.PlotFigureHandles)));
+            catch err
+                obj.showError(err);
+            end
+        end
+
+        function renderSeparateFigures(obj, options, forceRecreate)
+            views = pd_result_plot_views(obj.CurrentResult);
+            viewIds = {views.Id};
+            reuse = ~forceRecreate && numel(obj.PlotFigureHandles) == numel(viewIds) && ...
+                numel(obj.PlotFigureAxes) == numel(viewIds) && ...
+                all(ishghandle(obj.PlotFigureHandles)) && ...
+                all(ishghandle(obj.PlotFigureAxes)) && ...
+                isequal(obj.PlotFigureViewIds, viewIds);
+            if ~reuse
+                obj.closeSeparateFigures();
+                count = numel(viewIds);
+                obj.PlotFigureHandles = gobjects(1, count);
+                obj.PlotFigureAxes = gobjects(1, count);
+                for i = 1:count
+                    left = 100 + 32 * mod(i - 1, 8);
+                    bottom = 80 + 28 * mod(i - 1, 8);
+                    obj.PlotFigureHandles(i) = figure('Name', ...
+                        ['POST_DATA2 - ', views(i).Label], 'NumberTitle', 'off', ...
+                        'Tag', 'POST_DATA2_ResultFigure', 'Color', 'w', ...
+                        'Position', [left, bottom, 760, 560]);
+                    obj.PlotFigureAxes(i) = axes('Parent', obj.PlotFigureHandles(i), ...
+                        'Units', 'normalized', 'Position', [0.12, 0.12, 0.80, 0.80]);
+                end
+                obj.PlotFigureViewIds = viewIds;
+            end
+            for i = 1:numel(viewIds)
+                pd_render_result(obj.PlotFigureAxes(i), obj.CurrentResult, ...
+                    options, viewIds{i});
+            end
+        end
+
+        function value = hasAnySeparateFigures(obj)
+            value = ~isempty(obj.PlotFigureHandles) && ...
+                any(ishghandle(obj.PlotFigureHandles));
+        end
+
+        function closeSeparateFigures(obj)
+            if ~isempty(obj.PlotFigureHandles)
+                valid = ishghandle(obj.PlotFigureHandles);
+                delete(obj.PlotFigureHandles(valid));
+            end
+            obj.PlotFigureHandles = gobjects(1, 0);
+            obj.PlotFigureAxes = gobjects(1, 0);
+            obj.PlotFigureViewIds = {};
+        end
+
+        function closePlotFiguresFromButton(obj, ~, ~)
+            count = nnz(ishghandle(obj.PlotFigureHandles));
+            obj.closeSeparateFigures();
+            obj.setStatus(sprintf('已关闭 %d 个独立结果图窗。', count));
+        end
+
+        function closeApplication(obj, source, ~)
+            obj.closeSeparateFigures();
+            if nargin >= 2 && ishghandle(source)
+                set(source, 'CloseRequestFcn', '');
+                delete(source);
+            end
+        end
+
+        function options = getOutputOptions(obj)
+            options = pd_output_options_from_table(obj.OutputCatalog, get(obj.OutputTable, 'Data'));
+        end
+
+        function exportCurrentResult(obj, ~, ~)
+            if isempty(obj.CurrentResult)
+                obj.showError('Run an analysis before exporting.');
+                return;
+            end
+            try
+                obj.exportWithOptions(obj.getOutputOptions());
+            catch err
+                obj.showError(err);
+            end
+        end
+
+        function exportWithOptions(obj, options)
+            files = pd_export_result(obj.CurrentResult, obj.PlotAxes, options);
+            obj.setStatus(sprintf('Exported %d file(s) to %s.', numel(files), options.Directory));
+        end
+
+        function saveConfiguration(obj, ~, ~)
+            [name, folder] = uiputfile('*.mat', 'Save POST_DATA configuration', 'postdata_config.mat');
+            if isequal(name, 0), return; end
+            config = obj.captureConfiguration();
+            save(fullfile(folder, name), 'config');
+            obj.setStatus('Configuration saved.');
+        end
+
+        function config = captureConfiguration(obj)
+            config = struct();
+            config.schemaVersion = 2;
+            config.filePath = get(obj.FileEdit, 'String');
+            config.task = popupValue(obj.TaskPopup);
+            config.selectionMode = popupValue(obj.SelectionPopup);
+            config.selectionValue = get(obj.SelectionEdit, 'String');
+            config.slurmPath = get(obj.SlurmEdit, 'String');
+            config.progressMode = popupValue(obj.ProgressPopup);
+            config.resultLevel = popupValue(obj.ResultLevelPopup);
+            config.computeData = get(obj.ComputeTable, 'Data');
+            config.plotData = get(obj.PlotTable, 'Data');
+            config.outputData = get(obj.OutputTable, 'Data');
+        end
+
+        function loadConfiguration(obj, ~, ~)
+            [name, folder] = uigetfile('*.mat', 'Load POST_DATA configuration');
+            if isequal(name, 0), return; end
+            loaded = load(fullfile(folder, name), 'config');
+            if ~isfield(loaded, 'config')
+                obj.showError('Unsupported configuration file.');
+                return;
+            end
+            try
+                config = pd_upgrade_app_config(loaded.config);
+            catch err
+                obj.showError(err);
+                return;
+            end
+            obj.applyConfiguration(config);
+            obj.setStatus('Configuration loaded.');
+        end
+
+        function applyConfiguration(obj, config)
+            set(obj.FileEdit, 'String', config.filePath);
+            setPopupValue(obj.TaskPopup, config.task);
+            obj.taskChanged([], []);
+            setPopupValue(obj.SelectionPopup, config.selectionMode);
+            set(obj.SelectionEdit, 'String', config.selectionValue);
+            set(obj.SlurmEdit, 'String', config.slurmPath);
+            setPopupValue(obj.ProgressPopup, config.progressMode);
+            setPopupValue(obj.ResultLevelPopup, config.resultLevel);
+            if size(config.computeData, 1) == numel(obj.OptionCatalog)
+                set(obj.ComputeTable, 'Data', config.computeData);
+                obj.updateDependencyDisplay();
+            end
+            if size(config.plotData, 1) == numel(obj.PlotCatalog)
+                set(obj.PlotTable, 'Data', config.plotData);
+            end
+            if size(config.outputData, 1) == numel(obj.OutputCatalog)
+                set(obj.OutputTable, 'Data', config.outputData);
+            end
+            obj.selectionModeChanged([], []);
+        end
+
+        function setStatus(obj, message, state)
+            if nargin < 3, state = 'normal'; end
+            if ishghandle(obj.StatusText)
+                switch lower(state)
+                    case 'busy'
+                        color = [1.0, 0.96, 0.78];
+                    case 'success'
+                        color = [0.86, 0.97, 0.86];
+                    case 'error'
+                        color = [1.0, 0.84, 0.84];
+                    otherwise
+                        color = 'white';
+                end
+                set(obj.StatusText, 'String', message, 'BackgroundColor', color);
+                drawnow;
+            end
+        end
+
+        function showError(obj, errorValue)
+            if isa(errorValue, 'MException')
+                message = errorValue.message;
+                identifier = errorValue.identifier;
+                diagnostic = getReport(errorValue, 'extended', ...
+                    'hyperlinks', 'off');
+                logFile = pd_default_log_file();
+                pd_log(logFile, 'error', 'app', diagnostic);
+                if isempty(identifier), identifier = 'postdata:UnknownError'; end
+                dialogMessage = {message, ['错误标识：', identifier], ...
+                    ['详细日志：', logFile]};
+            else
+                message = pd_to_char(errorValue);
+                dialogMessage = {message};
+            end
+            obj.setStatus(['错误：', message], 'error');
+            errordlg(dialogMessage, 'POST_DATA2');
+        end
+    end
+end
+
+function tableHandle = makeOptionTable(parent)
+    tableHandle = uitable('Parent', parent, 'Units', 'normalized', ...
+        'Position', [0.02, 0.11, 0.96, 0.86], ...
+        'ColumnName', {'参数','数值','说明'}, ...
+        'ColumnEditable', [false true false], ...
+        'ColumnWidth', {190 180 430}, 'Data', cell(0, 3));
+end
+
+function addLabel(parent, label, y)
+    uicontrol('Parent', parent, 'Style', 'text', 'String', label, ...
+        'Units', 'normalized', 'Position', [0.04, y, 0.92, 0.035], ...
+        'HorizontalAlignment', 'left');
+end
+
+function control = addEdit(parent, value, position)
+    control = uicontrol('Parent', parent, 'Style', 'edit', 'String', value, ...
+        'Units', 'normalized', 'Position', position, ...
+        'HorizontalAlignment', 'left', 'BackgroundColor', 'white');
+end
+
+function control = addPopup(parent, values, position, callback)
+    control = uicontrol('Parent', parent, 'Style', 'popupmenu', 'String', values, ...
+        'Units', 'normalized', 'Position', position, 'BackgroundColor', 'white');
+    if ~isempty(callback), set(control, 'Callback', callback); end
+end
+
+function control = addButton(parent, label, position, callback)
+    control = uicontrol('Parent', parent, 'Style', 'pushbutton', 'String', label, ...
+        'Units', 'normalized', 'Position', position, 'Callback', callback);
+end
+
+function value = popupValue(control)
+    values = get(control, 'String');
+    index = get(control, 'Value');
+    if ischar(values)
+        value = strtrim(values(index, :));
+    else
+        value = values{index};
+    end
+end
+
+function setPopupValue(control, value)
+    values = get(control, 'String');
+    if ischar(values), values = cellstr(values); end
+    index = find(strcmpi(value, values), 1, 'first');
+    if isempty(index)
+        error('postdata:BadPopupValue', 'Unsupported value: %s', value);
+    end
+    set(control, 'Value', index);
+end
+
+function data = replaceTableOption(data, name, value)
+    row = find(strcmp(name, data(:, 1)), 1, 'first');
+    if isempty(row)
+        error('postdata:MissingPlotPresetOption', ...
+            'Plot preset refers to unknown option: %s.', name);
+    end
+    data{row, 2} = value;
+end
+
+function text = analysisDescription(task)
+    switch lower(strtrim(pd_to_char(task)))
+        case 'chunk'
+            text = '一维/二维场分析';
+        case 'network2d'
+            text = '二维孔隙网络分析';
+        case 'cluster'
+            text = '颗粒度/团簇分析';
+        case 'vx'
+            text = 'mass-v 分析';
+        case 'massx'
+            text = 'mass-x 分析';
+        otherwise
+            text = pd_to_char(task);
+    end
+end
+
+function position = defaultWindowPosition()
+    screen = get(0, 'ScreenSize');
+    width = max(520, min(1320, screen(3) - 40));
+    height = max(440, min(780, screen(4) - 80));
+    left = max(1, screen(1) + (screen(3) - width) / 2);
+    bottom = max(1, screen(2) + (screen(4) - height) / 2);
+    position = round([left, bottom, width, height]);
+end
+
+function initial = browseStart(currentValue, pattern)
+    currentValue = strtrim(pd_to_char(currentValue));
+    if exist(currentValue, 'file')
+        folder = fileparts(currentValue);
+    elseif exist(currentValue, 'dir')
+        folder = currentValue;
+    else
+        folder = pwd;
+    end
+    initial = fullfile(folder, pattern);
+end
