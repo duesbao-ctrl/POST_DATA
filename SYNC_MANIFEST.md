@@ -12,3 +12,5 @@ The whitelist is `postdata_run.m`, `postdata_startup.m`, `run_analysis.m`,
 `src/{analysis,core,export,io,plot}` plus examples, fixtures, and tests. The
 script deliberately excludes `postdata_app.m` and `src/app`, removes the old
 root-level duplicate implementations, and cleans MATLAB index/backup files.
+The recursive `src/core` copy includes `pd_ui_text.m` and the UTF-8
+`resources/ui_zh_CN.tsv` catalog required by localized result-view labels.

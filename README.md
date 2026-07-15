@@ -2,6 +2,8 @@
 
 面向 LAMMPS chunk、cluster、mass-v、mass-x 和二维孔隙网络数据的 MATLAB 后处理软件。项目仅保留一套模块化实现，兼容 MATLAB R2016b，不依赖 App Designer，也不使用 `+package` 目录。
 
+Windows 7 / MATLAB R2016b 的中文界面由 `src/core/resources/ui_zh_CN.tsv` 以 UTF-8 显式加载；可执行 `.m` 文件保持纯 ASCII，不依赖系统代码页，因此不会因英文或中文区域设置产生乱码。
+
 ## 启动
 
 ```matlab

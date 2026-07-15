@@ -7,7 +7,7 @@ function app = postdata_app()
     postdata_startup();
     existing = findall(0, 'Type', 'figure', 'Tag', 'POST_DATA2_MainFigure');
     if isempty(existing)
-        existing = findall(0, 'Type', 'figure', 'Name', 'POST_DATA2 MATLAB 后处理软件');
+        existing = findall(0, 'Type', 'figure', 'Name', pd_ui_text('POST_DATA2 MATLAB post-processing software'));
     end
     if ~isempty(existing)
         delete(existing);

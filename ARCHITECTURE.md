@@ -31,7 +31,10 @@ plot, and output structures, then delegates work to services.
 
 Owns versioned requests, validation, option catalogs, safe value parsing,
 selection conversion, execution checkpoints, logging, configuration upgrades,
-and shared compatibility helpers. The option catalog is
+shared compatibility helpers, and UI/result-view localization. Executable
+MATLAB sources remain ASCII-only; `pd_ui_text` explicitly decodes the UTF-8
+catalog under `src/core/resources` so Windows 7 / MATLAB R2016b never relies on
+the process code page. The option catalog is
 the single source of truth for all editable calculation parameters.
 Catalog metadata also defines allowed values, numeric constraints, required
 values, vector length, and dependencies. The GUI and dispatcher both consume
@@ -114,4 +117,6 @@ and plotting settings.
 5. Add output formats in `src/export` without changing analyzers or the GUI.
 6. Add integration tests in `tests/test_postdata.m`.
 
-All production code must remain compatible with MATLAB R2016b.
+All production code must remain compatible with MATLAB R2016b. Executable
+`.m` files must remain ASCII-only; localized text belongs in the UTF-8 resource
+catalog and is retrieved with `pd_ui_text`.

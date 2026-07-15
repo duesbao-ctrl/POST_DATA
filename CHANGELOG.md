@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 - 2026-07-15
+
+- Removed non-ASCII literals from executable MATLAB source files.
+- Added an explicitly decoded UTF-8 Chinese UI resource with an English fallback.
+- Added regression checks for Chinese Unicode values and ASCII-only M-files on MATLAB R2016b.
+
 ## 0.3.0 - 2026-07-14
 
 - Unified programmatic and GUI calculation-option validation.

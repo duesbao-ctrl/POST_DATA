@@ -19,6 +19,36 @@ function testVersion(testCase)
     verifyEqual(testCase, info.resultSchemaVersion, 1);
 end
 
+function testUiTextUsesExplicitUtf8Resource(testCase)
+    notRunYet = pd_ui_text('Not run yet');
+    verifyEqual(testCase, double(notRunYet), [23578 26410 36816 34892]);
+    totalViews = pd_ui_text('Total: %d views', 2);
+    verifyEqual(testCase, double(totalViews), [20849 32 50 32 24133]);
+    verifyEqual(testCase, pd_ui_text('Unmapped ASCII fallback'), ...
+        'Unmapped ASCII fallback');
+end
+
+function testExecutableMatlabSourcesAreAsciiOnly(testCase)
+    folders = regexp(genpath(testCase.TestData.RootDir), pathsep, 'split');
+    checked = 0;
+    for folderIndex = 1:numel(folders)
+        folder = folders{folderIndex};
+        if isempty(folder), continue; end
+        files = dir(fullfile(folder, '*.m'));
+        for fileIndex = 1:numel(files)
+            filePath = fullfile(folder, files(fileIndex).name);
+            fid = fopen(filePath, 'rb');
+            verifyGreaterThanOrEqual(testCase, fid, 0, filePath);
+            cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+            bytes = fread(fid, Inf, '*uint8');
+            verifyTrue(testCase, all(bytes <= 127), filePath);
+            clear cleanupObj;
+            checked = checked + 1;
+        end
+    end
+    verifyGreaterThan(testCase, checked, 0);
+end
+
 function testLegacyRunAnalysisUsesModularCore(testCase)
     result = run_analysis('mass-x', 'BaseDir', testCase.TestData.FixtureDir, ...
         'MassXFile', 'bin1d_dx_0.5.txt', ...
