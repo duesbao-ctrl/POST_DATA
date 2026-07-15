@@ -7,44 +7,44 @@ function views = pd_result_plot_views(result)
     views = emptyViews();
     switch lower(strtrim(pd_to_char(result.analysisType)))
         case 'chunk'
-            views = addView(views, 'field', '场分布');
-            views = addView(views, 'histogram', '数值直方图');
+            views = addView(views, 'field', pd_ui_text('Field distribution'));
+            views = addView(views, 'histogram', pd_ui_text('Value histogram'));
             if isfield(result, 'y') && ~isempty(result.y)
-                views = addView(views, 'profile-x', 'X 方向均值剖面');
-                views = addView(views, 'profile-y', 'Y 方向均值剖面');
+                views = addView(views, 'profile-x', pd_ui_text('Mean profile in X direction'));
+                views = addView(views, 'profile-y', pd_ui_text('Mean profile in Y direction'));
             end
         case 'cluster'
-            views = addView(views, 'count', '粒径计数分布');
-            views = addView(views, 'probability', '粒径概率分布');
-            views = addView(views, 'cdf', '粒径累积分布');
+            views = addView(views, 'count', pd_ui_text('Particle-size count distribution'));
+            views = addView(views, 'probability', pd_ui_text('Particle-size probability distribution'));
+            views = addView(views, 'cdf', pd_ui_text('Particle-size cumulative distribution'));
             if isfield(result, 'meanByBin') && ~isempty(result.meanByBin.centers)
-                views = addView(views, 'mean', '平均粒径位置分布');
+                views = addView(views, 'mean', pd_ui_text('Mean particle size by position'));
             end
         case 'vx'
-            views = addView(views, 'cumulative', '累积分布');
-            views = addView(views, 'differential', '微分分布');
+            views = addView(views, 'cumulative', pd_ui_text('Cumulative distribution'));
+            views = addView(views, 'differential', pd_ui_text('Differential distribution'));
         case 'massx'
-            views = addView(views, 'cumulative', '累计分布（保证单调递减）');
-            views = addView(views, 'differential', '局部面密度（非累计）');
+            views = addView(views, 'cumulative', pd_ui_text('Cumulative distribution (monotonic decreasing)'));
+            views = addView(views, 'differential', pd_ui_text('Local areal density (non-cumulative)'));
         case 'network2d'
-            views = addView(views, 'phase', '孔隙相分布');
+            views = addView(views, 'phase', pd_ui_text('Pore phase distribution'));
             if isfield(result, 'pore') && isfield(result.pore, 'labelGrid')
-                views = addView(views, 'pore-label', '孔隙连通组分');
+                views = addView(views, 'pore-label', pd_ui_text('Pore connected components'));
             end
             if isfield(result, 'matrix') && isfield(result.matrix, 'labelGrid')
-                views = addView(views, 'matrix-label', '基体连通组分');
+                views = addView(views, 'matrix-label', pd_ui_text('Matrix connected components'));
             end
             if hasComponentDiameter(result, 'pore')
-                views = addView(views, 'pore-diameter', '孔隙等效直径');
+                views = addView(views, 'pore-diameter', pd_ui_text('Pore equivalent diameter'));
             end
             if hasComponentDiameter(result, 'matrix')
-                views = addView(views, 'matrix-diameter', '基体等效直径');
+                views = addView(views, 'matrix-diameter', pd_ui_text('Matrix equivalent diameter'));
             end
             if hasProfile(result, 'x')
-                views = addView(views, 'profile-x', 'X 方向孔隙率剖面');
+                views = addView(views, 'profile-x', pd_ui_text('Porosity profile in X direction'));
             end
             if hasProfile(result, 'y')
-                views = addView(views, 'profile-y', 'Y 方向孔隙率剖面');
+                views = addView(views, 'profile-y', pd_ui_text('Porosity profile in Y direction'));
             end
         otherwise
             error('postdata:plotViews:UnknownType', 'Unsupported analysis type.');

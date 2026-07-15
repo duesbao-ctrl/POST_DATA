@@ -4,6 +4,10 @@
 后处理核心。该项目只提供脚本/API，不包含图形界面；计算、输出和绘图能力与
 `POST_DATA2` 共用同一套模块化实现，兼容 MATLAB R2016b，不使用 `+package`。
 
+Windows 7 / MATLAB R2016b 下的结果视图中文文本由
+`src/core/resources/ui_zh_CN.tsv` 以 UTF-8 显式读取；可执行 `.m` 文件
+保持纯 ASCII，不依赖 Windows 系统代码页。
+
 ## 启动与基本用法
 
 ```matlab
@@ -87,7 +91,7 @@ POST_DATA/
   run_analysis.m              旧调用方式兼容包装器
   postdata_startup.m          路径初始化
   src/
-    core/                     请求、参数目录、验证、日志
+    core/                     请求、参数目录、验证、日志、UTF-8 文本资源
     io/                       chunk/Slurm 读取、索引、输入预检
     analysis/                 数值分析与 network2d 子模块
     plot/                     统一论文样式和多视图渲染
