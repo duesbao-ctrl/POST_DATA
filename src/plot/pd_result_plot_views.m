@@ -9,7 +9,7 @@ function views = pd_result_plot_views(result)
         case 'chunk'
             views = addView(views, 'field', pd_ui_text('Field distribution'));
             views = addView(views, 'histogram', pd_ui_text('Value histogram'));
-            if isfield(result, 'y') && ~isempty(result.y)
+            if isfield(result, 'dimension') && strcmpi(result.dimension, '2d')
                 views = addView(views, 'profile-x', pd_ui_text('Mean profile in X direction'));
                 views = addView(views, 'profile-y', pd_ui_text('Mean profile in Y direction'));
             end
@@ -26,6 +26,10 @@ function views = pd_result_plot_views(result)
         case 'massx'
             views = addView(views, 'cumulative', pd_ui_text('Cumulative distribution (monotonic decreasing)'));
             views = addView(views, 'differential', pd_ui_text('Local areal density (non-cumulative)'));
+            if isfield(result, 'localParticleCount')
+                views = addView(views, 'particle-count', ...
+                    pd_ui_text('SPH particle count by X bin'));
+            end
         case 'network2d'
             views = addView(views, 'phase', pd_ui_text('Pore phase distribution'));
             if isfield(result, 'pore') && isfield(result.pore, 'labelGrid')

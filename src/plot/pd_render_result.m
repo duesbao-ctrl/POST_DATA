@@ -39,18 +39,19 @@ function handles = pd_render_result(ax, result, options, viewName)
     applyPrePlotStyle(ax, options);
     holdCleanup = onCleanup(@() restoreHoldState(ax, wasHeld, overlay));
     analysisType = lower(strtrim(pd_to_char(result.analysisType)));
+    plotData = pd_result_plot_data(result, viewName);
 
     switch analysisType
         case 'chunk'
-            handles = renderChunk(ax, result, options, viewName);
+            handles = renderChunk(ax, result, options, viewName, plotData);
         case 'cluster'
-            handles = renderCluster(ax, result, options, viewName);
+            handles = renderCluster(ax, result, options, viewName, plotData);
         case 'vx'
-            handles = renderVelocity(ax, result, options, viewName);
+            handles = renderVelocity(ax, result, options, viewName, plotData);
         case 'massx'
-            handles = renderMassX(ax, result, options, viewName);
+            handles = renderMassX(ax, result, options, viewName, plotData);
         case 'network2d'
-            handles = renderNetwork(ax, result, options, viewName);
+            handles = renderNetwork(ax, result, options, viewName, plotData);
         otherwise
             error('postdata:renderResult:UnknownType', ...
                 'Unsupported analysis type: %s', analysisType);
@@ -58,23 +59,24 @@ function handles = pd_render_result(ax, result, options, viewName)
     pd_apply_publication_style(ax, options);
 end
 
-function handles = renderMassX(ax, result, options, viewName)
+function handles = renderMassX(ax, result, options, viewName, plotData)
     if isempty(result.cumulativeDensity)
         text(0.5, 0.5, 'No density variables', 'Parent', ax, ...
             'Units', 'normalized', 'HorizontalAlignment', 'center');
         handles = [];
         return;
     end
-    if strcmp(viewName, 'differential')
-        values = result.density;
-        titleText = 'mass-x differential distribution';
+    if strcmp(viewName, 'particle-count')
+        titleText = 'SPH particle count';
+        yLabel = 'Particle count';
+    elseif strcmp(viewName, 'differential')
+        titleText = 'SPH mass-x local';
         yLabel = 'Areal density (mg/cm^2)';
     else
-        values = result.cumulativeDensity;
-        titleText = 'mass-x cumulative distribution';
+        titleText = 'SPH mass-x cumulative';
         yLabel = 'Cumulative areal density (mg/cm^2)';
     end
-    handles = plot(ax, result.coordinate, values, ...
+    handles = plot(ax, plotData.Values(:, 1), plotData.Values(:, 2:end), ...
         'LineWidth', options.LineWidth, 'LineStyle', options.LineStyle, ...
         'Marker', options.MarkerSymbol, 'MarkerSize', options.MarkerSize);
     baseLabel = resultSeriesLabel(result);
@@ -94,24 +96,22 @@ function handles = renderMassX(ax, result, options, viewName)
     end
     xlabel(ax, label, 'Interpreter', 'none');
     ylabel(ax, yLabel);
-    title(ax, sprintf('%s @ timestep %g', titleText, result.timestep));
+    title(ax, sprintf('%s @ %g', titleText, result.timestep));
 end
 
-function handles = renderChunk(ax, result, options, viewName)
+function handles = renderChunk(ax, result, options, viewName, plotData)
     if strcmp(viewName, 'histogram')
-        values = result.value(isfinite(result.value));
-        [counts, centers] = hist(values, max(5, min(50, round(sqrt(numel(values)))))); %#ok<HIST>
-        handles = bar(ax, centers, counts, 1.0, 'FaceColor', firstPaletteColor(options));
+        handles = bar(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
+            1.0, 'FaceColor', firstPaletteColor(options));
         xlabel(ax, result.variableUsed, 'Interpreter', 'none');
         ylabel(ax, 'Count');
         title(ax, sprintf('%s histogram @ timestep %g', result.variableUsed, result.timestep), ...
             'Interpreter', 'none');
         return;
     elseif any(strcmp(viewName, {'profile-x','profile-y'}))
-        if strcmp(viewName, 'profile-x'), coordinate = result.x; label = 'x'; ...
-        else, coordinate = result.y; label = 'y'; end
-        [centers, means] = coordinateMean(coordinate, result.value);
-        handles = plot(ax, centers, means, 'LineWidth', options.LineWidth, ...
+        if strcmp(viewName, 'profile-x'), label = 'x'; else, label = 'y'; end
+        handles = plot(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
+            'LineWidth', options.LineWidth, ...
             'LineStyle', options.LineStyle, 'Marker', options.MarkerSymbol, ...
             'MarkerSize', options.MarkerSize, ...
             'DisplayName', resultSeriesLabel(result));
@@ -120,15 +120,28 @@ function handles = renderChunk(ax, result, options, viewName)
         title(ax, sprintf('%s mean profile %s @ timestep %g', ...
             result.variableUsed, upper(label), result.timestep), 'Interpreter', 'none');
         return;
+    elseif isfield(result, 'dimension') && strcmpi(result.dimension, '3d')
+        handles = scatter3(ax, plotData.Values(:, 1), ...
+            plotData.Values(:, 2), plotData.Values(:, 3), ...
+            options.MarkerSize ^ 2, plotData.Values(:, 4), ...
+            scatterMarker(options.MarkerSymbol), 'filled', ...
+            'DisplayName', resultSeriesLabel(result));
+        xlabel(ax, 'x');
+        ylabel(ax, 'y');
+        zlabel(ax, 'z');
+        axis(ax, 'tight');
+        grid(ax, 'on');
+        setColorbar(ax, options.ShowColorbar, result.variableUsed);
     elseif isempty(result.y)
-        handles = plot(ax, result.x, result.value, 'LineWidth', options.LineWidth, ...
+        handles = plot(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
+            'LineWidth', options.LineWidth, ...
             'LineStyle', options.LineStyle, 'Marker', options.MarkerSymbol, ...
             'MarkerSize', options.MarkerSize, ...
             'DisplayName', resultSeriesLabel(result));
         xlabel(ax, 'x');
         ylabel(ax, result.variableUsed, 'Interpreter', 'none');
     else
-        handles = renderField2D(ax, result, options);
+        handles = renderField2D(ax, result, options, plotData);
         xlabel(ax, 'x');
         ylabel(ax, 'y');
         axis(ax, 'tight');
@@ -138,9 +151,11 @@ function handles = renderChunk(ax, result, options, viewName)
         'Interpreter', 'none');
 end
 
-function handles = renderField2D(ax, result, options)
-    [isGrid, xValues, yValues, valueGrid] = rectangularGrid( ...
-        result.x, result.y, result.value);
+function handles = renderField2D(ax, result, options, plotData)
+    isGrid = plotData.IsRectangularGrid;
+    xValues = plotData.GridX;
+    yValues = plotData.GridY;
+    valueGrid = plotData.GridZ;
     mode = lower(strtrim(pd_to_char(options.FieldRenderMode)));
     if strcmp(mode, 'auto')
         if isGrid, mode = 'image'; else, mode = 'scatter'; end
@@ -167,12 +182,17 @@ function handles = renderField2D(ax, result, options)
             [~, handles] = contourf(ax, xValues, yValues, valueGrid, ...
                 round(options.ContourLevels), 'LineStyle', 'none');
             if strcmpi(options.UpdateMode, 'overlay')
-                try, set(handles, 'FaceAlpha', 0.48); catch, end
+                try
+                    set(handles, 'FaceAlpha', 0.48);
+                catch
+                    % FaceAlpha support differs between graphics releases.
+                end
             end
             addLegendProxy(ax, resultSeriesLabel(result));
         otherwise
-            handles = scatter(ax, result.x, result.y, options.MarkerSize ^ 2, ...
-                result.value, scatterMarker(options.MarkerSymbol), 'filled', ...
+            handles = scatter(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
+                options.MarkerSize ^ 2, plotData.Values(:, 3), ...
+                scatterMarker(options.MarkerSymbol), 'filled', ...
                 'DisplayName', resultSeriesLabel(result));
     end
 end
@@ -184,29 +204,7 @@ function handle = addLegendProxy(ax, label)
     if ~wasHeld, hold(ax, 'off'); end
 end
 
-function [isGrid, xValues, yValues, valueGrid] = rectangularGrid(x, y, value)
-    x = x(:); y = y(:); value = value(:);
-    [xValues, ~, xIndex] = unique(x);
-    [yValues, ~, yIndex] = unique(y);
-    isGrid = numel(xValues) * numel(yValues) == numel(value);
-    valueGrid = [];
-    if ~isGrid, return; end
-    linearIndex = sub2ind([numel(yValues), numel(xValues)], yIndex, xIndex);
-    if numel(unique(linearIndex)) ~= numel(linearIndex)
-        isGrid = false;
-        return;
-    end
-    valueGrid = nan(numel(yValues), numel(xValues));
-    valueGrid(linearIndex) = value;
-end
-
-function [centers, means] = coordinateMean(coordinate, values)
-    valid = isfinite(coordinate) & isfinite(values);
-    [centers, ~, groups] = unique(coordinate(valid));
-    means = accumarray(groups, values(valid), [], @mean);
-end
-
-function handles = renderCluster(ax, result, options, viewName)
+function handles = renderCluster(ax, result, options, viewName, plotData)
     if isempty(result.diameter)
         text(0.5, 0.5, 'No valid clusters', 'Parent', ax, ...
             'Units', 'normalized', 'HorizontalAlignment', 'center');
@@ -214,31 +212,27 @@ function handles = renderCluster(ax, result, options, viewName)
         return;
     end
     if strcmp(viewName, 'cdf')
-        values = sort(result.diameter(:));
-        handles = plot(ax, values, (1:numel(values)).' ./ numel(values), ...
+        handles = plot(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
             'LineWidth', options.LineWidth, 'LineStyle', options.LineStyle, ...
             'Marker', options.MarkerSymbol, 'MarkerSize', options.MarkerSize);
         xlabel(ax, 'Equivalent diameter'); ylabel(ax, 'Cumulative probability');
         title(ax, sprintf('Cluster diameter CDF @ timestep %g', result.timestep));
         return;
     elseif strcmp(viewName, 'mean')
-        handles = plot(ax, result.meanByBin.centers, result.meanByBin.meanDiameter, ...
+        handles = plot(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
             'LineWidth', options.LineWidth, 'LineStyle', options.LineStyle, ...
             'Marker', effectiveMarker(options.MarkerSymbol, 'o'), ...
             'MarkerSize', options.MarkerSize);
         xlabel(ax, 'Position bin'); ylabel(ax, 'Mean equivalent diameter');
         title(ax, sprintf('Mean cluster diameter @ timestep %g', result.timestep));
         return;
-    elseif strcmp(viewName, 'probability') && isfield(result, 'hist')
-        centers = result.hist.centers;
-        counts = result.hist.prob;
+    elseif strcmp(viewName, 'probability')
         yLabel = 'Probability';
     else
-        nBins = max(5, min(50, round(sqrt(numel(result.diameter)))));
-        [counts, centers] = hist(result.diameter, nBins); %#ok<HIST>
         yLabel = 'Count';
     end
-    handles = bar(ax, centers, counts, 1.0, 'FaceColor', firstPaletteColor(options));
+    handles = bar(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
+        1.0, 'FaceColor', firstPaletteColor(options));
     set(handles, 'LineWidth', options.LineWidth);
     set(handles, 'DisplayName', resultSeriesLabel(result));
     if strcmpi(options.UpdateMode, 'overlay')
@@ -253,7 +247,7 @@ function handles = renderCluster(ax, result, options, viewName)
     title(ax, sprintf('Cluster distribution @ timestep %g', result.timestep));
 end
 
-function handles = renderVelocity(ax, result, options, viewName)
+function handles = renderVelocity(ax, result, options, viewName, plotData)
     if isempty(result.cumulativeDensity)
         text(0.5, 0.5, 'No density variables', 'Parent', ax, ...
             'Units', 'normalized', 'HorizontalAlignment', 'center');
@@ -261,15 +255,14 @@ function handles = renderVelocity(ax, result, options, viewName)
         return;
     end
     if strcmp(viewName, 'differential')
-        values = result.density;
         yLabel = 'Areal density (mg/cm^2)';
         titleText = 'mass-v differential distribution';
     else
-        values = result.cumulativeDensity;
         yLabel = 'Cumulative areal density (mg/cm^2)';
         titleText = 'mass-v cumulative distribution';
     end
-    handles = plot(ax, result.velocity, values, 'LineWidth', options.LineWidth, ...
+    handles = plot(ax, plotData.Values(:, 1), plotData.Values(:, 2:end), ...
+        'LineWidth', options.LineWidth, ...
         'LineStyle', options.LineStyle, 'Marker', options.MarkerSymbol, ...
         'MarkerSize', options.MarkerSize);
     baseLabel = resultSeriesLabel(result);
@@ -295,11 +288,11 @@ function handles = renderVelocity(ax, result, options, viewName)
     title(ax, sprintf('%s @ timestep %g', titleText, result.timestep));
 end
 
-function handles = renderNetwork(ax, result, options, viewName)
+function handles = renderNetwork(ax, result, options, viewName, plotData)
     if any(strcmp(viewName, {'pore-label','matrix-label'}))
         if strcmp(viewName, 'pore-label'), phaseName = 'pore'; else, phaseName = 'matrix'; end
-        handles = imagesc(result.xCenters, result.yCenters, ...
-            result.(phaseName).labelGrid, 'Parent', ax);
+        handles = imagesc(plotData.GridX, plotData.GridY, ...
+            plotData.GridZ, 'Parent', ax);
         set(ax, 'YDir', 'normal'); axis(ax, 'tight');
         setColorbar(ax, options.ShowColorbar, [phaseName, ' component label']);
         xlabel(ax, 'x'); ylabel(ax, 'y');
@@ -307,16 +300,14 @@ function handles = renderNetwork(ax, result, options, viewName)
         return;
     elseif any(strcmp(viewName, {'pore-diameter','matrix-diameter'}))
         if strcmp(viewName, 'pore-diameter'), phaseName = 'pore'; else, phaseName = 'matrix'; end
-        values = result.(phaseName).components.equivDiameter;
-        [counts, centers] = hist(values, max(3, min(40, round(sqrt(numel(values)))))); %#ok<HIST>
-        handles = bar(ax, centers, counts, 1.0, 'FaceColor', firstPaletteColor(options));
+        handles = bar(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
+            1.0, 'FaceColor', firstPaletteColor(options));
         xlabel(ax, 'Equivalent diameter'); ylabel(ax, 'Count');
         title(ax, sprintf('%s diameter @ timestep %g', phaseName, result.timestep));
         return;
     elseif any(strcmp(viewName, {'profile-x','profile-y'}))
         axisName = viewName(end);
-        profile = result.profile.(axisName);
-        handles = plot(ax, profile.centers, profile.porosity, ...
+        handles = plot(ax, plotData.Values(:, 1), plotData.Values(:, 2), ...
             'LineWidth', options.LineWidth, 'LineStyle', options.LineStyle, ...
             'Marker', options.MarkerSymbol, 'MarkerSize', options.MarkerSize, ...
             'DisplayName', resultSeriesLabel(result));
@@ -325,13 +316,8 @@ function handles = renderNetwork(ax, result, options, viewName)
             upper(axisName), result.timestep));
         return;
     end
-    phase = double(result.poreMask);
-    phase(~result.validMask) = NaN;
-    if isfield(result, 'cutCell') && isfield(result.cutCell, 'pore') && ...
-            isfield(result.cutCell.pore, 'fraction')
-        phase = result.cutCell.pore.fraction;
-    end
-    handles = imagesc(result.xCenters, result.yCenters, phase, 'Parent', ax);
+    phase = plotData.GridZ;
+    handles = imagesc(plotData.GridX, plotData.GridY, phase, 'Parent', ax);
     if strcmpi(options.UpdateMode, 'overlay')
         set(handles, 'AlphaData', 0.45 .* double(isfinite(phase)));
         plot(ax, NaN, NaN, 'LineWidth', options.LineWidth, ...

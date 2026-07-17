@@ -44,6 +44,10 @@ function files = pd_export_result(result, ax, options)
         detailFiles = pd_export_detail_csv(result, stageBasePath);
         stagedFiles = [stagedFiles, detailFiles]; %#ok<AGROW>
     end
+    if options.SavePlotDataCSV
+        plotDataFiles = pd_export_plot_data_csv(result, stageBasePath);
+        stagedFiles = [stagedFiles, plotDataFiles]; %#ok<AGROW>
+    end
 
     needsFigure = options.SavePNG || options.SaveFIG || options.SavePDF;
     exportFigure = [];

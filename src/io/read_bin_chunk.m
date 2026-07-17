@@ -4,9 +4,8 @@ function out = read_bin_chunk(filePath, varargin)
 %   out = READ_BIN_CHUNK(filePath, 'ProgressMode', 'console')
 %
 % File format:
-%   line 1-2: comments
-%   line 3  : variable names (usually prefixed by '#')
-%   then repeated blocks:
+%   extensible comment preamble ending in "# Chunk ..."
+%   then repeated blocks, optionally prefixed by "# Time ...":
 %     timestep number_of_chunks total_count
 %     <number_of_chunks> lines of numeric data
 %
@@ -43,48 +42,25 @@ function out = read_bin_chunk(filePath, varargin)
     tracker = make_file_progress(progressMode, 'Reading file', filePath);
     progressCleanup = onCleanup(@() tracker.close()); %#ok<NASGU>
 
-    header1 = fgetl(fid);
-    header2 = fgetl(fid);
-    header3 = fgetl(fid);
+    preamble = pd_read_chunk_preamble(fid, 'read_bin_chunk');
     tracker.update(ftell(fid) / fileSize);
 
-    if ~ischar(header1) || ~ischar(header2) || ~ischar(header3)
-        error('read_bin_chunk:HeaderTooShort', 'File header is incomplete: %s', filePath);
-    end
-
-    [varNames, validVarNames] = pd_parse_chunk_variables( ...
-        header3, 'read_bin_chunk');
+    varNames = preamble.varNames;
+    validVarNames = preamble.validVarNames;
     numVars = numel(varNames);
 
     stepsCell = cell(128, 1);
     stepCount = 0;
 
     while true
-        line = fgetl(fid);
-        if ~ischar(line)
+        frame = pd_read_next_chunk_frame_header(fid, 'read_bin_chunk');
+        if frame.eof
             break;
         end
 
-        if isempty(strtrim(line))
-            continue;
-        end
-
-        blockHeader = sscanf(line, '%f').';
-        if numel(blockHeader) < 3
-            error('read_bin_chunk:BadBlockHeader', ...
-                'Invalid block header in file %s: "%s"', filePath, line);
-        end
-
-        timestep = blockHeader(1);
-        numChunks = blockHeader(2);
-        totalCount = blockHeader(3);
-
-        if numChunks < 0 || abs(numChunks - round(numChunks)) > 0
-            error('read_bin_chunk:BadChunkCount', ...
-                'Number-of-chunks must be a non-negative integer. Got: %g', numChunks);
-        end
-
-        numChunks = round(numChunks);
+        timestep = frame.timestep;
+        numChunks = frame.numChunks;
+        totalCount = frame.totalCount;
         data = zeros(numChunks, numVars);
 
         row = 1;
@@ -118,6 +94,7 @@ function out = read_bin_chunk(filePath, varargin)
         end
         stepsCell{stepCount, 1} = struct( ...
             'timestep', timestep, ...
+            'physicalTime', frame.physicalTime, ...
             'numChunks', numChunks, ...
             'totalCount', totalCount, ...
             'data', data);
@@ -125,7 +102,8 @@ function out = read_bin_chunk(filePath, varargin)
     end
 
     if stepCount == 0
-        steps = struct('timestep', {}, 'numChunks', {}, 'totalCount', {}, 'data', {});
+        steps = struct('timestep', {}, 'physicalTime', {}, ...
+            'numChunks', {}, 'totalCount', {}, 'data', {});
     else
         steps = [stepsCell{1:stepCount}];
     end
@@ -137,10 +115,15 @@ function out = read_bin_chunk(filePath, varargin)
 
     out = struct();
     out.filePath = filePath;
-    out.headerLines = {header1, header2, header3};
+    out.headerLines = preamble.headerLines;
     out.varNames = varNames;
     out.validVarNames = validVarNames;
     out.colIndex = colIndex;
+    out.metadata = preamble.metadata;
+    out.inputFormat = preamble.metadata.inputFormat;
+    out.unitSystem = preamble.metadata.unitSystem;
+    out.taskName = preamble.metadata.name;
+    out.chunkKind = preamble.metadata.kind;
     out.steps = steps;
     tracker.finish();
 end

@@ -19,6 +19,8 @@ function request = pd_apply_analysis_options(request, catalog, tableData)
                 request.chunk.coordRangeX = value;
             case 'chunk.coordRangeY'
                 request.chunk.coordRangeY = value;
+            case 'chunk.coordRangeZ'
+                request.chunk.coordRangeZ = value;
             case 'chunk.gradientVariable'
                 request.chunk.gradientVariable = value;
             case 'chunk.gradientSmoothLevel'

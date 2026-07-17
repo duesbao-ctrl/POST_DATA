@@ -1,0 +1,11 @@
+# Chunk-averaged data for SPID
+# Units microscale
+# Name cluster Kind cluster
+# Timestep Number-of-chunks Total-count
+# Chunk Ncount x y z vx vy vz c_cluster mass_sum
+# Time 0.1
+100 4 20
+1 2 0 0 0 1 0 0 1 2
+2 4 1 0 0 2 0 0 2 4
+3 6 2 1 0 3 0 0 3 6
+4 8 3 1 1 4 0 0 4 8

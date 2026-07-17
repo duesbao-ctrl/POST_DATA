@@ -50,8 +50,7 @@ function writeChunk1d(filePath)
     cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
     fprintf(fid, '# generated large 1D fixture\n');
     fprintf(fid, '# 401 bins and 3 timesteps\n');
-    fprintf(fid, ['# Chunk Coord1 c_rho mass1ArealDensity ', ...
-        'mass2ArealDensity massArealDensity\n']);
+    fprintf(fid, '# Chunk Coord1 Ncount c_rho\n');
     n = 401;
     x = (0:n - 1).' .* 0.025;
     timesteps = [100, 200, 300];
@@ -59,13 +58,12 @@ function writeChunk1d(filePath)
         center = 3.2 + 0.8 * (s - 1);
         rho = 0.8 + 1.7 .* exp(-((x - center) ./ 1.25).^2) + ...
             0.15 .* sin(2 .* pi .* x ./ 2.5 + 0.4 .* s);
-        mass1 = 0.004 + 0.020 .* exp(-((x - center) ./ 1.1).^2);
-        mass2 = 0.003 + 0.014 .* exp(-((x - center - 1.0) ./ 1.6).^2);
-        total = mass1 + mass2;
-        fprintf(fid, '%d %d %d\n', timesteps(s), n, round(sum(rho) * 100));
+        ncount = max(0, round(8 + 32 .* exp(-((x - center) ./ 1.35).^2) + ...
+            3 .* sin(2 .* pi .* x ./ 2.5 + 0.4 .* s)));
+        fprintf(fid, '%d %d %d\n', timesteps(s), n, sum(ncount));
         for i = 1:n
-            fprintf(fid, '%d %.8g %.8g %.8g %.8g %.8g\n', ...
-                i, x(i), rho(i), mass1(i), mass2(i), total(i));
+            fprintf(fid, '%d %.8g %d %.8g\n', ...
+                i, x(i), ncount(i), rho(i));
         end
     end
 end
@@ -75,8 +73,7 @@ function writeChunk2d(filePath)
     cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
     fprintf(fid, '# generated large 2D fixture\n');
     fprintf(fid, '# 61 x 41 grid and 3 timesteps\n');
-    fprintf(fid, ['# Chunk Coord1 Coord2 Ncount c_rho ', ...
-        'mass1ArealDensity mass2ArealDensity massArealDensity\n']);
+    fprintf(fid, '# Chunk Coord1 Coord2 Ncount c_rho\n');
     nx = 61;
     ny = 41;
     xValues = (0:nx - 1) .* 0.05;
@@ -101,10 +98,8 @@ function writeChunk2d(filePath)
                     ncount = 2 + mod(ix + 2 * iy + s, 4);
                 end
                 rho = 0.25 + 0.32 * ncount + 0.12 * sin(1.7 * x) * cos(1.4 * y);
-                mass1 = 0.0008 * max(ncount, 0) * (1 + 0.12 * sin(x + s));
-                mass2 = 0.0005 * max(ncount, 0) * (1 + 0.10 * cos(y + 0.3 * s));
-                fprintf(fid, '%d %.8g %.8g %d %.8g %.8g %.8g %.8g\n', ...
-                    row, x, y, ncount, rho, mass1, mass2, mass1 + mass2);
+                fprintf(fid, '%d %.8g %.8g %d %.8g\n', ...
+                    row, x, y, ncount, rho);
             end
         end
     end

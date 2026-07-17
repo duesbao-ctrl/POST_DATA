@@ -71,33 +71,42 @@ function out = read_chunk_step_fast(filePath, varargin)
                 error('read_chunk_step_fast:MissingTime', ...
                     'SelectBy=Time requires Time.');
             end
-        if isempty(opt.SlurmPath)
-            error('read_chunk_step_fast:MissingSlurmPath', ...
-                'SlurmPath is required when selecting by Time.');
+        validEmbeddedTime = isfinite(idx.physicalTimes);
+        if any(validEmbeddedTime)
+            candidates = find(validEmbeddedTime);
+            [~, nearest] = min(abs(idx.physicalTimes(candidates) - opt.Time));
+            sel = candidates(nearest);
+            reqStep = idx.timesteps(sel);
+        else
+            if isempty(opt.SlurmPath)
+                error('read_chunk_step_fast:MissingSlurmPath', ...
+                    ['SlurmPath is required when selecting by Time from a ' ...
+                     'legacy chunk file without "# Time" metadata.']);
+            end
+            S = read_slurm_stepcpu(opt.SlurmPath);
+            m = round(opt.SlurmModuleIndex);
+            if m < 1 || m > numel(S.modules)
+                error('read_chunk_step_fast:BadSlurmModule', ...
+                    'SlurmModuleIndex out of range: %d', m);
+            end
+            scol = S.modules(m).colIndex;
+            if ~isfield(scol, 'Time') || ~isfield(scol, 'Step')
+                error('read_chunk_step_fast:SlurmMissingCols', ...
+                    'Slurm block missing Time/Step columns.');
+            end
+            slurmTimeAll = S.modules(m).data(:, scol.Time);
+            slurmStepAll = S.modules(m).data(:, scol.Step);
+            validSlurm = isfinite(slurmTimeAll) & isfinite(slurmStepAll);
+            if ~any(validSlurm)
+                error('read_chunk_step_fast:SlurmNoFiniteRows', ...
+                    'No finite Time/Step rows found in slurm block %d.', m);
+            end
+            slurmTime = slurmTimeAll(validSlurm);
+            slurmStep = slurmStepAll(validSlurm);
+            [~, it] = min(abs(slurmTime - opt.Time));
+            req = slurmStep(it);
+            [sel, reqStep] = locateByStep(idx, req);
         end
-        S = read_slurm_stepcpu(opt.SlurmPath);
-        m = round(opt.SlurmModuleIndex);
-        if m < 1 || m > numel(S.modules)
-            error('read_chunk_step_fast:BadSlurmModule', ...
-                'SlurmModuleIndex out of range: %d', m);
-        end
-        scol = S.modules(m).colIndex;
-        if ~isfield(scol, 'Time') || ~isfield(scol, 'Step')
-            error('read_chunk_step_fast:SlurmMissingCols', ...
-                'Slurm block missing Time/Step columns.');
-        end
-        slurmTimeAll = S.modules(m).data(:, scol.Time);
-        slurmStepAll = S.modules(m).data(:, scol.Step);
-        validSlurm = isfinite(slurmTimeAll) & isfinite(slurmStepAll);
-        if ~any(validSlurm)
-            error('read_chunk_step_fast:SlurmNoFiniteRows', ...
-                'No finite Time/Step rows found in slurm block %d.', m);
-        end
-        slurmTime = slurmTimeAll(validSlurm);
-        slurmStep = slurmStepAll(validSlurm);
-        [~, it] = min(abs(slurmTime - opt.Time));
-        req = slurmStep(it);
-        [sel, reqStep] = locateByStep(idx, req);
         case 'timestep'
             if isempty(opt.TimeStep)
                 error('read_chunk_step_fast:MissingTimeStep', ...
@@ -116,12 +125,9 @@ function out = read_chunk_step_fast(filePath, varargin)
     end
     cleanupObj = onCleanup(@() fclose(fid));
 
-    header1 = fgetl(fid);
-    header2 = fgetl(fid);
-    header3 = fgetl(fid);
-
-    [varNames, validVarNames] = pd_parse_chunk_variables( ...
-        header3, 'read_chunk_step_fast');
+    preamble = pd_read_chunk_preamble(fid, 'read_chunk_step_fast');
+    varNames = preamble.varNames;
+    validVarNames = preamble.validVarNames;
     numVars = numel(varNames);
 
     reportProgress(opt.CancelCallback, opt.ProgressCallback, 0.65, ...
@@ -176,13 +182,19 @@ function out = read_chunk_step_fast(filePath, varargin)
 
     out = struct();
     out.filePath = filePath;
-    out.headerLines = {header1, header2, header3};
+    out.headerLines = preamble.headerLines;
     out.varNames = varNames;
     out.validVarNames = validVarNames;
     out.colIndex = colIndex;
+    out.metadata = preamble.metadata;
+    out.inputFormat = preamble.metadata.inputFormat;
+    out.unitSystem = preamble.metadata.unitSystem;
+    out.taskName = preamble.metadata.name;
+    out.chunkKind = preamble.metadata.kind;
     out.requestedTimeStep = reqStep;
     out.stepIndex = sel;
     out.timestep = timestep;
+    out.physicalTime = idx.physicalTimes(sel);
     out.numChunks = numChunks;
     out.totalCount = totalCount;
     out.data = data;
@@ -241,9 +253,14 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
             if isfield(S, 'idx') && isfield(S.idx, 'fileSize') && ...
                     isfield(S.idx, 'fileDatenum')
                 hasSig = isfield(S.idx, 'quickSig');
+                hasCurrentFormat = isfield(S.idx, 'formatVersion') && ...
+                    isequal(S.idx.formatVersion, 2) && ...
+                    isfield(S.idx, 'physicalTimes') && ...
+                    isfield(S.idx, 'metadata');
                 sameSig = hasSig && isSameQuickSig(S.idx.quickSig, curSig);
                 if isequal(S.idx.fileSize, d.bytes) && ...
-                        isequal(S.idx.fileDatenum, d.datenum) && sameSig
+                        isequal(S.idx.fileDatenum, d.datenum) && sameSig && ...
+                        hasCurrentFormat
                     idx = S.idx;
                     reportProgress(cancelCallback, progressCallback, 0.6, ...
                         'Validated chunk index cache');
@@ -266,47 +283,41 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
     progressCleanup = onCleanup(@() tracker.close()); %#ok<NASGU>
     totalBytes = max(d.bytes, 1);
 
-    fgetl(fid); fgetl(fid); fgetl(fid);
+    preamble = pd_read_chunk_preamble(fid, 'read_chunk_step_fast');
     tracker.update(ftell(fid) / totalBytes);
 
     blockPos = zeros(1000, 1);
     dataPos  = zeros(1000, 1);
     timesteps = zeros(1000, 1);
+    physicalTimes = nan(1000, 1);
     numChunks = zeros(1000, 1);
     n = 0;
 
     while true
-        pos = ftell(fid);
-        line = fgetl(fid);
-        if ~ischar(line)
+        frame = pd_read_next_chunk_frame_header(fid, 'read_chunk_step_fast');
+        if frame.eof
             break;
         end
-        if isempty(strtrim(line))
-            continue;
-        end
-
-        h = sscanf(line, '%f').';
-        if numel(h) < 3
-            continue;
-        end
-        validateBlockHeader(h, line, 'read_chunk_step_fast:BadBlockHeader');
 
         n = n + 1;
         if n > numel(blockPos)
             blockPos = [blockPos; zeros(numel(blockPos),1)]; %#ok<AGROW>
             dataPos  = [dataPos;  zeros(numel(dataPos),1)]; %#ok<AGROW>
             timesteps = [timesteps; zeros(numel(timesteps),1)]; %#ok<AGROW>
+            physicalTimes = [physicalTimes; nan(numel(physicalTimes),1)]; %#ok<AGROW>
             numChunks = [numChunks; zeros(numel(numChunks),1)]; %#ok<AGROW>
         end
 
-        blockPos(n) = pos;
-        dataPos(n) = ftell(fid);
-        timesteps(n) = h(1);
-        numChunks(n) = round(h(2));
+        blockPos(n) = frame.blockPosition;
+        dataPos(n) = frame.dataPosition;
+        timesteps(n) = frame.timestep;
+        physicalTimes(n) = frame.physicalTime;
+        numChunks(n) = frame.numChunks;
 
         for i = 1:numChunks(n)
             if ~ischar(fgetl(fid))
-                break;
+                error('read_chunk_step_fast:UnexpectedEOF', ...
+                    'Unexpected EOF while indexing timestep %g.', frame.timestep);
             end
         end
         tracker.update(ftell(fid) / totalBytes);
@@ -320,6 +331,7 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
     blockPos = blockPos(1:n);
     dataPos = dataPos(1:n);
     timesteps = timesteps(1:n);
+    physicalTimes = physicalTimes(1:n);
     numChunks = numChunks(1:n);
 
     dt = NaN;
@@ -333,6 +345,7 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
     end
 
     idx = struct();
+    idx.formatVersion = 2;
     idx.filePath = filePath;
     idx.fileSize = d.bytes;
     idx.fileDatenum = d.datenum;
@@ -340,7 +353,12 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
     idx.blockPos = blockPos;
     idx.dataPos = dataPos;
     idx.timesteps = timesteps;
+    idx.physicalTimes = physicalTimes;
     idx.numChunks = numChunks;
+    idx.headerLines = preamble.headerLines;
+    idx.varNames = preamble.varNames;
+    idx.validVarNames = preamble.validVarNames;
+    idx.metadata = preamble.metadata;
     idx.dt = dt;
     idx.isUniform = isUniform;
 

@@ -4,7 +4,8 @@ function data = pd_catalog_table_data(catalog)
     data = cell(numel(catalog), 3);
     for i = 1:numel(catalog)
         data{i, 1} = catalog(i).Name;
-        data{i, 2} = pd_format_option_value(catalog(i).Default);
+        data{i, 2} = pd_format_option_editor_value( ...
+            catalog(i).Default, catalog(i).Type);
         data{i, 3} = catalog(i).Description;
     end
 end

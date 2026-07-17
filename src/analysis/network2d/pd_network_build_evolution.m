@@ -7,10 +7,10 @@ function output = pd_network_build_evolution(chunkFile, options, snapshotFunctio
     timestepAll = index.timesteps(:);
     timeAll = nan(size(timestepAll));
     if strcmp(axisName, 'time')
-        timeAll = mapPhysicalTime(timestepAll, options, chunkFile);
+        timeAll = resolvePhysicalTime(index, timestepAll, options, chunkFile);
         axisValueAll = timeAll;
     elseif ~isempty(options.SlurmPath)
-        timeAll = mapPhysicalTime(timestepAll, options, chunkFile);
+        timeAll = resolvePhysicalTime(index, timestepAll, options, chunkFile);
         axisValueAll = timestepAll;
     elseif strcmp(axisName, 'timestep')
         axisValueAll = timestepAll;
@@ -40,6 +40,17 @@ function output = pd_network_build_evolution(chunkFile, options, snapshotFunctio
     end
     options.ProgressCallback(1, 'Evolution analysis complete');
     output = buildTransitions(output);
+end
+
+function times = resolvePhysicalTime(index, timesteps, options, chunkFile)
+    if isfield(index, 'physicalTimes')
+        embedded = index.physicalTimes(:);
+        if numel(embedded) == numel(timesteps) && all(isfinite(embedded))
+            times = embedded;
+            return;
+        end
+    end
+    times = mapPhysicalTime(timesteps, options, chunkFile);
 end
 
 function selected = selectSnapshots(axisValues, range, stride)

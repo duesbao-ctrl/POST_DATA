@@ -49,7 +49,7 @@ function patterns = defaultPatterns(request)
         case 'vx'
             patterns = {'mass_v*.txt','massv*.txt','vx_chunk*.txt'};
         case 'massx'
-            patterns = {'mass_x*.txt','massx*.txt','bin1d*.txt'};
+            patterns = {'mass_x*.txt','massx*.txt','bin1d*.txt','bin2d*.txt'};
     end
 end
 
