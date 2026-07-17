@@ -4,7 +4,7 @@ function info = pd_version()
 
     info = struct();
     info.name = 'POST_DATA';
-    info.version = '0.3.1';
+    info.version = '0.6.0';
     info.resultSchemaVersion = 1;
     info.minimumMatlabRelease = 'R2016b';
 end

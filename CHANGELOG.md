@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.6.0 - 2026-07-16
+
+- Added current SPID chunk parsing for extensible metadata headers and
+  per-frame `# Time` values while retaining legacy three-line input support.
+- Added SPID `spatial`, `field`, and `cluster` compatibility, including 3D
+  spatial field inspection and old/new cluster coordinate aliases.
+- Added metadata-driven conversions for SPID length, velocity, density, and
+  areal-density units; legacy files retain their manual conversion defaults.
+- Added direct physical-time selection without Slurm when SPID embeds time.
+- Added regression fixtures for SPID spatial 1D/3D, field mass-v, and cluster
+  output.
+
+## 0.5.0 - 2026-07-16
+
+- Replaced mass-x areal-density-column input with the SPH `Ncount` physical
+  model based on initial density, particle spacing, raw length unit, and y
+  normalization width.
+- Added bin1d full-width and bin2d full-width/multi-slice mass-x for 2D/3D
+  SPH, including z-width normalization for 3D, fractional y-bin overlap,
+  particle-count plots, and 10 um coordinate defaults.
+- Kept SPH raw fields and mass-x independent from the MD `dV` derived-field path.
+- Added a Plot Data copy option that can omit column headers while keeping CSV
+  export headers unchanged.
+
+## 0.4.0 - 2026-07-16
+
+- Added a paged Plot Data tab for every available result view.
+- Added selected-row and full-table clipboard copy plus current-view CSV export.
+- Added `SavePlotDataCSV` to export the exact numeric table behind every view.
+- Centralized derived histogram, CDF, mean-profile, mass-distribution, and
+  network-grid values in `pd_result_plot_data`; rendering and export now share
+  the same numeric contract.
+- Moved generated verification dashboards under ignored `outputs/verification`
+  and removed committed/distributed verification output.
+
 ## 0.3.1 - 2026-07-15
 
 - Removed non-ASCII literals from executable MATLAB source files.

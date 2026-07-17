@@ -37,6 +37,10 @@ function files = pd_export_detail_csv(result, basePath)
             data = result.coordinate(:);
             for i = 1:numel(result.densityVars)
                 name = regexprep(result.densityVars{i}, '[^A-Za-z0-9_]', '_');
+                if isfield(result, 'localParticleCount')
+                    headers{end + 1} = ['particle_count_', name]; %#ok<AGROW>
+                    data(:, end + 1) = result.localParticleCount(:, i); %#ok<AGROW>
+                end
                 headers{end + 1} = ['density_', name]; %#ok<AGROW>
                 headers{end + 1} = ['cumulative_', name]; %#ok<AGROW>
                 data(:, end + 1) = result.density(:, i); %#ok<AGROW>

@@ -13,8 +13,10 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
     p.addParameter('CancelCallback', @() false, @(x) isa(x, 'function_handle'));
     p.addParameter('ProgressCallback', @(fraction, message) [], ...
         @(x) isa(x, 'function_handle'));
-    p.addParameter('VelocityVar', 'Chunk', @isTextScalar);
+    p.addParameter('VelocityVar', 'auto', @isTextScalar);
     p.addParameter('VelocityFactor', 0.001, @isnumeric);
+    p.addParameter('DensityFactor', 1, @isnumeric);
+    p.addParameter('UseFileUnitMetadata', true, @islogical);
     p.addParameter('VelocityLabel', 'Velocity', @isTextScalar);
     p.addParameter('VelocityUnit', 'km/s', @isTextScalar);
     p.addParameter('CumulativeDirection', 'high-to-low', @isTextScalar);
@@ -24,6 +26,7 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
     p.parse(vxChunkPath, varargin{:});
     opt = p.Results;
     validatePositiveFactor(opt.VelocityFactor);
+    validatePositiveFactor(opt.DensityFactor);
     vxChunkPath = toChar(vxChunkPath);
 
     selectorArgs = {'SelectBy', toChar(opt.SelectBy), 'Index', opt.Index, ...
@@ -34,15 +37,23 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
         'CancelCallback', opt.CancelCallback, ...
         'ProgressCallback', opt.ProgressCallback};
     step = read_chunk_step_fast(vxChunkPath, selectorArgs{:});
-    velocityVar = matlab.lang.makeValidName(toChar(opt.VelocityVar));
+    velocityVar = resolveVelocityVariable(step, opt.VelocityVar);
     if ~isfield(step.colIndex, velocityVar)
         error('vx_chunk_cumulative:MissingVelocityVar', ...
             'Velocity coordinate column "%s" is required.', velocityVar);
     end
-    velocity = step.data(:, step.colIndex.(velocityVar)) .* opt.VelocityFactor;
+    velocityFactor = opt.VelocityFactor;
+    densityFactor = opt.DensityFactor;
+    units = pd_spid_unit_info(step.unitSystem);
+    usedFileUnitMetadata = opt.UseFileUnitMetadata && units.isKnown;
+    if usedFileUnitMetadata
+        velocityFactor = units.velocityKmSPerUnit;
+        densityFactor = units.arealDensityMgCm2PerUnit;
+    end
+    velocity = step.data(:, step.colIndex.(velocityVar)) .* velocityFactor;
     distribution = pd_cumulative_areal_density(step, velocity, ...
         opt.DensityVars, opt.CumulativeDirection, 'vx_chunk_cumulative', ...
-        opt.NegativeDensityMode);
+        opt.NegativeDensityMode, densityFactor);
 
     fig = [];
     if opt.MakePlot
@@ -65,11 +76,41 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
     out.negativeDensityMode = distribution.negativeDensityMode;
     out.negativeValueCount = distribution.negativeValueCount;
     out.isMonotonicDecreasing = distribution.isMonotonicDecreasing;
-    out.velocityFactor = opt.VelocityFactor;
+    out.velocityFactor = velocityFactor;
+    out.densityFactor = densityFactor;
+    out.useFileUnitMetadata = opt.UseFileUnitMetadata;
+    out.usedFileUnitMetadata = usedFileUnitMetadata;
+    out.unitSystem = step.unitSystem;
+    out.physicalTime = step.physicalTime;
+    out.inputFormat = step.inputFormat;
+    out.taskName = step.taskName;
+    out.chunkKind = step.chunkKind;
     out.velocityVar = velocityVar;
     out.velocityLabel = toChar(opt.VelocityLabel);
     out.velocityUnit = toChar(opt.VelocityUnit);
     out.figure = fig;
+end
+
+function name = resolveVelocityVariable(step, requested)
+    col = step.colIndex;
+    requested = strtrim(toChar(requested));
+    if ~strcmpi(requested, 'auto')
+        name = matlab.lang.makeValidName(requested);
+        return;
+    end
+    if strcmpi(step.inputFormat, 'spid-chunk') && ...
+            strcmpi(step.chunkKind, 'field')
+        candidates = {'Coord1','Chunk'};
+    else
+        candidates = {'Chunk','Coord1'};
+    end
+    name = '';
+    for i = 1:numel(candidates)
+        if isfield(col, candidates{i})
+            name = candidates{i};
+            return;
+        end
+    end
 end
 
 function renderDistribution(ax, distribution, timestep, opt)

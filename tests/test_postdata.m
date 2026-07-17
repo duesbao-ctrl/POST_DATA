@@ -52,7 +52,8 @@ end
 function testLegacyRunAnalysisUsesModularCore(testCase)
     result = run_analysis('mass-x', 'BaseDir', testCase.TestData.FixtureDir, ...
         'MassXFile', 'bin1d_dx_0.5.txt', ...
-        'MassXOptions', {'MakePlot', false}, 'ProgressMode', 'off');
+        'MassXOptions', [sampleMassXOptions(), {'MakePlot', false}], ...
+        'ProgressMode', 'off');
     verifyEqual(testCase, result.analysisType, 'massx');
     verifyEqual(testCase, result.cumulativeDirection, 'high-to-low');
 
@@ -86,6 +87,19 @@ function testChunkAnalysis(testCase)
     verifyEqual(testCase, sum(result.value(isfinite(result.value))), 3.7, 'AbsTol', 1e-12);
 end
 
+function testSphRawFieldBypassesMdVolumeDerivation(testCase)
+    request = makeRequest(testCase, 'chunk', ...
+        'bin2d_dx_0.5_dy_0.5_Lz_1.txt');
+    request.chunk.variable = 'c_rho';
+    request.chunk.dV = [];
+    rawResult = postdata_run(request);
+    verifyEqual(testCase, rawResult.sourceType, 'raw');
+
+    request.chunk.variable = 'pressure';
+    verifyError(testCase, @() postdata_run(request), ...
+        'analyze_chunk_field:NeedDV');
+end
+
 function testChunk1dAutoDimensionDoesNotRequireCoord2(testCase)
     request = makeRequest(testCase, 'chunk', 'bin1d_dx_0.5.txt');
     request.chunk.dimension = 'auto';
@@ -95,6 +109,38 @@ function testChunk1dAutoDimensionDoesNotRequireCoord2(testCase)
     verifyEqual(testCase, result.dimensionRequested, 'auto');
     verifyEmpty(testCase, result.y);
     verifyEqual(testCase, result.x, (0:0.5:2).', 'AbsTol', 1e-12);
+end
+
+function testCurrentSpidPreambleAndEmbeddedTime(testCase)
+    filePath = fullfile(testCase.TestData.FixtureDir, 'spid_spatial3d.txt');
+    step = read_chunk_step_fast(filePath, 'SelectBy', 'Time', ...
+        'Time', 0.19, 'ProgressMode', 'off');
+    verifyEqual(testCase, step.timestep, 200);
+    verifyEqual(testCase, step.physicalTime, 0.2, 'AbsTol', 1e-12);
+    verifyEqual(testCase, step.inputFormat, 'spid-chunk');
+    verifyEqual(testCase, step.unitSystem, 'microscale');
+    verifyEqual(testCase, step.taskName, 'bin3d');
+    verifyEqual(testCase, step.chunkKind, 'spatial');
+    verifyEqual(testCase, numel(step.headerLines), 5);
+
+    full = read_bin_chunk(filePath, 'ProgressMode', 'off');
+    verifyEqual(testCase, numel(full.steps), 2);
+    verifyEqual(testCase, [full.steps.physicalTime], [0.1 0.2], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, full.metadata.kind, 'spatial');
+end
+
+function testCurrentSpidSpatial3dAnalysis(testCase)
+    request = makeRequest(testCase, 'chunk', 'spid_spatial3d.txt');
+    request.chunk.variable = 'rho';
+    result = postdata_run(request);
+    verifyEqual(testCase, result.dimension, '3d');
+    verifyEqual(testCase, result.coordZ, [0;0;0;0;1;1;1;1]);
+    verifyEqual(testCase, result.physicalTime, 0.1, 'AbsTol', 1e-12);
+    data = pd_result_plot_data(result, 'field');
+    verifyEqual(testCase, data.Kind, 'field3d');
+    verifyEqual(testCase, data.ColumnNames, {'x','y','z','rho'});
+    verifyEqual(testCase, size(data.Values), [8 4]);
 end
 
 function testExplicitChunk2dRejectsOneDimensionalInput(testCase)
@@ -162,6 +208,45 @@ function testVelocityAnalysis(testCase)
     verifyEqual(testCase, numel(result.velocity), 5);
 end
 
+function testCurrentSpidFieldVelocityAndUnits(testCase)
+    request = makeRequest(testCase, 'vx', 'spid_field_vx.txt');
+    result = postdata_run(request);
+    verifyEqual(testCase, result.velocityVar, 'Coord1');
+    verifyEqual(testCase, result.velocity, [-10;0;10], 'AbsTol', 1e-12);
+    totalIndex = find(strcmp(result.densityVars, ...
+        'massArealDensity'), 1, 'first');
+    verifyEqual(testCase, result.cumulativeDensity(:, totalIndex), ...
+        [3;2.5;1.5], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.velocityFactor, 10);
+    verifyEqual(testCase, result.densityFactor, 1);
+    verifyTrue(testCase, result.usedFileUnitMetadata);
+    verifyEqual(testCase, result.chunkKind, 'field');
+end
+
+function testCurrentSpidClusterColumnAliases(testCase)
+    request = makeRequest(testCase, 'cluster', 'spid_cluster.txt');
+    request.analysisOptions = {'Dx', 0.5, 'Dim', 2, ...
+        'Range_c_x', [1 2], 'XVarForMean', 'c_x'};
+    result = postdata_run(request);
+    verifyEqual(testCase, result.selectedRows, 2);
+    verifyEqual(testCase, result.filteredData(:, result.colIndex.x), [1;2]);
+    verifyFalse(testCase, isempty(result.meanByBin.centers));
+    verifyEqual(testCase, result.chunkKind, 'cluster');
+end
+
+function testSpidUnitConversionTable(testCase)
+    si = pd_spid_unit_info('si');
+    cgs = pd_spid_unit_info('centimeter_gram_microsecond');
+    micro = pd_spid_unit_info('microscale');
+    verifyEqual(testCase, si.lengthUmPerUnit, 1e6);
+    verifyEqual(testCase, si.arealDensityMgCm2PerUnit, 100);
+    verifyEqual(testCase, cgs.velocityKmSPerUnit, 10);
+    verifyEqual(testCase, cgs.arealDensityMgCm2PerUnit, 1000);
+    verifyEqual(testCase, micro.lengthUmPerUnit, 10);
+    verifyEqual(testCase, micro.arealDensityMgCm2PerUnit, 1);
+end
+
 function testMassVAliasesAndEditableCoordinate(testCase)
     request = makeRequest(testCase, 'mass-v', 'vx_chunk_test.txt');
     request.analysisOptions = {'VelocityVar', 'Chunk', 'VelocityFactor', 0.002, ...
@@ -179,31 +264,118 @@ function testMassXHighToLowCumulativeDistribution(testCase)
     request = makeRequest(testCase, 'massx', 'bin1d_dx_0.5.txt');
     result = postdata_run(request);
     verifyEqual(testCase, result.analysisType, 'massx');
-    verifyEqual(testCase, result.coordinate, (0:0.5:2).', 'AbsTol', 1e-12);
-    totalIndex = find(strcmp(result.densityVars, 'massArealDensity'), 1, 'first');
-    verifyNotEmpty(testCase, totalIndex);
-    verifyEqual(testCase, result.cumulativeDensity(:, totalIndex), ...
-        [3.5; 3.2; 2.7; 2.0; 1.1], 'AbsTol', 1e-12);
+    verifyEqual(testCase, result.simulationType, 'SPH');
+    verifyEqual(testCase, result.massModel, 'planar-2d-count');
+    verifyEqual(testCase, result.coordinate, (0:5:20).', 'AbsTol', 1e-12);
+    verifyEqual(testCase, result.localParticleCount, (1:5).');
+    verifyEqual(testCase, result.density, (1:5).' .* 0.01, ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.cumulativeDensity, ...
+        [0.15; 0.14; 0.12; 0.09; 0.05], 'AbsTol', 1e-12);
     verifyEqual(testCase, result.cumulativeDirection, 'high-to-low');
     verifyTrue(testCase, all(result.isMonotonicDecreasing));
     verifyLessThanOrEqual(testCase, ...
-        max(diff(result.cumulativeDensity(:, totalIndex))), 1e-12);
+        max(diff(result.cumulativeDensity)), 1e-12);
+end
+
+function testCurrentSpidMassXUsesLengthMetadata(testCase)
+    request = makeRequest(testCase, 'massx', 'spid_spatial1d.txt');
+    result = postdata_run(request);
+    verifyEqual(testCase, result.coordinate, (0:5:20).', 'AbsTol', 1e-12);
+    verifyEqual(testCase, result.rawLengthUnitUm, 10);
+    verifyTrue(testCase, result.usedFileUnitMetadata);
+    verifyEqual(testCase, result.chunkKind, 'spatial');
+    verifyTrue(testCase, all(result.isMonotonicDecreasing));
 end
 
 function testMassXRangeAndFixedDecreasingDirection(testCase)
     request = makeRequest(testCase, 'massx', 'bin1d_dx_0.5.txt');
-    request.analysisOptions = {'CoordinateFactor', 2, ...
-        'CoordinateRange', [1 3]};
+    request.analysisOptions = pd_upsert_option( ...
+        request.analysisOptions, 'CoordinateFactor', 20);
+    request.analysisOptions = pd_upsert_option( ...
+        request.analysisOptions, 'CoordinateRange', [10 30]);
     result = postdata_run(request);
-    verifyEqual(testCase, result.coordinate, [1;2;3], 'AbsTol', 1e-12);
-    totalIndex = find(strcmp(result.densityVars, 'massArealDensity'), 1, 'first');
-    verifyEqual(testCase, result.cumulativeDensity(:, totalIndex), ...
-        [2.1;1.6;0.9], 'AbsTol', 1e-12);
-    verifyTrue(testCase, result.isMonotonicDecreasing(totalIndex));
+    verifyEqual(testCase, result.coordinate, [10;20;30], 'AbsTol', 1e-12);
+    verifyEqual(testCase, result.cumulativeDensity, ...
+        [0.09;0.07;0.04], 'AbsTol', 1e-12);
+    verifyTrue(testCase, result.isMonotonicDecreasing);
 
     request.analysisOptions = {'CumulativeDirection', 'low-to-high'};
     verifyError(testCase, @() postdata_run(request), ...
         'postdata:InvalidOption');
+end
+
+function testMassXTwoDimensionalFullWidthAndSlices(testCase)
+    request = makeRequest(testCase, 'massx', ...
+        'bin2d_dx_0.5_dy_0.5_Lz_1.txt');
+    request.resultLevel = 'full';
+    request.analysisOptions = {'ChunkDim', '2d', 'InitialDensity', 2, ...
+        'ParticleSpacing', 0.2, 'RawLengthUnitUm', 10, ...
+        'CoordinateFactor', 10};
+    fullResult = postdata_run(request);
+    verifyEqual(testCase, fullResult.chunkDimension, '2d');
+    verifyEqual(testCase, fullResult.coordinate, [0;10], 'AbsTol', 1e-12);
+    verifyEqual(testCase, fullResult.localParticleCount, [2;4], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, fullResult.density, [0.08;0.16], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, fullResult.cumulativeDensity, [0.24;0.16], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, fullResult.particleMassModelValue, 0.08, ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, fullResult.particleLineMassGPerCm, 8e-8, ...
+        'AbsTol', 1e-18);
+    verifyEqual(testCase, fullResult.sliceDefinitions.coveredWidthRaw, 2, ...
+        'AbsTol', 1e-12);
+
+    request.analysisOptions = {'ChunkDim', '2d', 'InitialDensity', 2, ...
+        'ParticleSpacing', 0.2, 'RawLengthUnitUm', 10, ...
+        'CoordinateFactor', 10, 'SliceCentersY', [0 1], ...
+        'SliceWidthsY', 1};
+    slicedResult = postdata_run(request);
+    verifyEqual(testCase, slicedResult.localParticleCount, [2 0;1 3], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, slicedResult.density, [0.16 0;0.08 0.24], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, slicedResult.cumulativeDensity, ...
+        [0.24 0.24;0.08 0.24], 'AbsTol', 1e-12);
+    verifyTrue(testCase, all(slicedResult.isMonotonicDecreasing));
+    verifyEqual(testCase, numel(slicedResult.sliceDefinitions), 2);
+end
+
+function testMassXTwoDimensionalFractionalSliceOverlap(testCase)
+    request = makeRequest(testCase, 'massx', ...
+        'bin2d_dx_0.5_dy_0.5_Lz_1.txt');
+    request.analysisOptions = {'ChunkDim', '2d', 'InitialDensity', 2, ...
+        'ParticleSpacing', 0.2, 'RawLengthUnitUm', 10, ...
+        'CoordinateFactor', 10, 'SliceCentersY', 0.5, ...
+        'SliceWidthsY', 1};
+    result = postdata_run(request);
+    verifyEqual(testCase, result.localParticleCount, [1;2], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.density, [0.08;0.16], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.sliceBoundaryMethod, ...
+        'fractional-bin-overlap');
+end
+
+function testMassXThreeDimensionalParticleMassAndAreaNormalization(testCase)
+    request = makeRequest(testCase, 'massx', 'bin1d_dx_0.5.txt');
+    request.analysisOptions = {'ChunkDim', '1d', 'SphDimension', 3, ...
+        'InitialDensity', 2, 'ParticleSpacing', 0.1, ...
+        'RawLengthUnitUm', 10, 'TransverseWidth', 1, ...
+        'OutOfPlaneWidth', 2, 'CoordinateFactor', 10};
+    result = postdata_run(request);
+    verifyEqual(testCase, result.massModel, 'volumetric-3d-count');
+    verifyEqual(testCase, result.particleMassModelValue, 0.002, ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.particleMassG, 2e-12, ...
+        'AbsTol', 1e-22);
+    verifyTrue(testCase, isnan(result.particleLineMassGPerCm));
+    verifyEqual(testCase, result.density, (1:5).' .* 0.001, ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.cumulativeDensity, ...
+        [0.015;0.014;0.012;0.009;0.005], 'AbsTol', 1e-12);
 end
 
 function testSharedMassDistributionSupportsPrefixedColumns(testCase)
@@ -306,6 +478,101 @@ function testRendererUsesCallerAxes(testCase)
     verifyEqual(testCase, ancestor(handle, 'axes'), ax);
 end
 
+function testPlotDataContractMatchesRenderedViews(testCase)
+    request = makeRequest(testCase, 'chunk', 'bin2d_dx_0.5_dy_0.5_Lz_1.txt');
+    request.resultLevel = 'full';
+    result = postdata_run(request);
+
+    fieldData = pd_result_plot_data(result, 'field');
+    verifyEqual(testCase, fieldData.ColumnNames, {'x','y',result.variableUsed});
+    verifyEqual(testCase, fieldData.Values, ...
+        [result.x(:), result.y(:), result.value(:)], 'AbsTol', 1e-12);
+    verifyTrue(testCase, fieldData.IsRectangularGrid);
+
+    histogramData = pd_result_plot_data(result, 'histogram');
+    verifyEqual(testCase, sum(histogramData.Values(:, 2)), ...
+        nnz(isfinite(result.value)), 'AbsTol', 1e-12);
+
+    profileData = pd_result_plot_data(result, 'profile-x');
+    verifyEqual(testCase, profileData.ColumnNames{1}, 'x');
+    verifyEqual(testCase, size(profileData.Values, 2), 2);
+
+    fig = figure('Visible', 'off');
+    cleanupObj = onCleanup(@() close(fig)); %#ok<NASGU>
+    ax = axes('Parent', fig);
+    imageHandle = pd_render_result(ax, result, [], 'field');
+    verifyEqual(testCase, get(imageHandle, 'CData'), fieldData.GridZ, ...
+        'AbsTol', 1e-12);
+
+    massRequest = makeRequest(testCase, 'massx', 'bin1d_dx_0.5.txt');
+    massResult = postdata_run(massRequest);
+    massData = pd_result_plot_data(massResult, 'cumulative');
+    lineHandles = pd_render_result(ax, massResult, [], 'cumulative');
+    verifyEqual(testCase, get(lineHandles(1), 'XData').', ...
+        massData.Values(:, 1), 'AbsTol', 1e-12);
+    verifyEqual(testCase, get(lineHandles(1), 'YData').', ...
+        massData.Values(:, 2), 'AbsTol', 1e-12);
+end
+
+function testPlotDataCsvAndDelimitedText(testCase)
+    request = makeRequest(testCase, 'massx', 'bin1d_dx_0.5.txt');
+    result = postdata_run(request);
+    plotData = pd_result_plot_data(result, 'cumulative');
+
+    text = pd_plot_data_text(plotData, char(9), [1 3]);
+    lines = regexp(strtrim(text), '\n', 'split');
+    verifyEqual(testCase, numel(lines), 3);
+    verifyNotEmpty(testCase, strfind(lines{1}, char(9))); %#ok<STRIFCND>
+
+    textWithoutHeader = pd_plot_data_text( ...
+        plotData, char(9), [1 3], false);
+    linesWithoutHeader = regexp(strtrim(textWithoutHeader), '\n', 'split');
+    verifyEqual(testCase, numel(linesWithoutHeader), 2);
+    firstCells = regexp(linesWithoutHeader{1}, char(9), 'split');
+    verifyEqual(testCase, str2double(firstCells{1}), ...
+        plotData.Values(1, 1), 'AbsTol', 1e-12);
+    verifyError(testCase, @() pd_plot_data_text( ...
+        plotData, char(9), [1 3], 2), ...
+        'postdata:plotDataText:BadHeaderFlag');
+
+    outputDir = tempname;
+    mkdir(outputDir);
+    cleanupObj = onCleanup(@() cleanupDirectory(outputDir)); %#ok<NASGU>
+    files = pd_export_plot_data_csv(result, fullfile(outputDir, 'case'));
+    views = pd_result_plot_views(result);
+    verifyEqual(testCase, numel(files), numel(views));
+    verifyTrue(testCase, all(cellfun(@(p) exist(p, 'file') == 2, files)));
+    content = fileread(files{1});
+    verifyNotEmpty(testCase, strfind(content, plotData.ColumnNames{1})); %#ok<STRIFCND>
+    verifyEqual(testCase, numel(regexp(strtrim(content), '\n', 'split')), ...
+        plotData.RowCount + 1);
+end
+
+function testEveryAvailableViewProvidesPlotData(testCase)
+    cases = { ...
+        'chunk', 'bin2d_dx_0.5_dy_0.5_Lz_1.txt', {}; ...
+        'cluster', 'cluster_chunk_test.txt', {}; ...
+        'vx', 'vx_chunk_test.txt', {}; ...
+        'massx', 'bin1d_dx_0.5.txt', sampleMassXOptions(); ...
+        'network2d', 'bin2d_dx_0.5_dy_0.5_Lz_1.txt', ...
+            {'ThresholdN', 1, 'ProfileAxis', 'both'}};
+    for i = 1:size(cases, 1)
+        request = makeRequest(testCase, cases{i, 1}, cases{i, 2});
+        request.resultLevel = 'full';
+        request.analysisOptions = cases{i, 3};
+        result = postdata_run(request);
+        views = pd_result_plot_views(result);
+        for j = 1:numel(views)
+            plotData = pd_result_plot_data(result, views(j).Id);
+            verifyEqual(testCase, plotData.ViewId, views(j).Id);
+            verifyEqual(testCase, plotData.RowCount, size(plotData.Values, 1));
+            verifyEqual(testCase, plotData.ColumnCount, size(plotData.Values, 2));
+            verifyEqual(testCase, numel(plotData.ColumnNames), ...
+                plotData.ColumnCount);
+        end
+    end
+end
+
 function testPlotUpdateModeParsing(testCase)
     catalog = pd_plot_option_catalog();
     data = pd_catalog_table_data(catalog);
@@ -320,6 +587,32 @@ function testPlotUpdateModeParsing(testCase)
     data = setTableValue(data, 'UpdateMode', 'invalid');
     verifyError(testCase, @() pd_plot_options_from_table(catalog, data), ...
         'postdata:BadPlotUpdateMode');
+end
+
+function testOptionEditorValueFormatting(testCase)
+    verifyEqual(testCase, pd_format_option_editor_value([], 'numeric'), '');
+    verifyEqual(testCase, pd_format_option_editor_value('[7.0]', 'numeric'), '7');
+    verifyEqual(testCase, pd_format_option_editor_value('[0.1]', 'numeric'), '0.1');
+    verifyEqual(testCase, ...
+        pd_format_option_editor_value('[0.6 1.2 1.8]', 'numeric'), ...
+        '[0.6 1.2 1.8]');
+
+    catalog = pd_option_catalog('massx');
+    data = pd_catalog_table_data(catalog);
+    densityRow = find(strcmp('InitialDensity', data(:, 1)), 1, 'first');
+    spacingRow = find(strcmp('ParticleSpacing', data(:, 1)), 1, 'first');
+    rangeRow = find(strcmp('CoordinateRange', data(:, 1)), 1, 'first');
+    verifyEqual(testCase, data{densityRow, 2}, '');
+    verifyEqual(testCase, data{spacingRow, 2}, '');
+    verifyEqual(testCase, data{rangeRow, 2}, '');
+
+    data{densityRow, 2} = '[7.0]';
+    data{spacingRow, 2} = '[0.1]';
+    data{rangeRow, 2} = '[0 30]';
+    data = pd_normalize_catalog_table_data(catalog, data);
+    verifyEqual(testCase, data{densityRow, 2}, '7');
+    verifyEqual(testCase, data{spacingRow, 2}, '0.1');
+    verifyEqual(testCase, data{rangeRow, 2}, '[0 30]');
 end
 
 function testPlotTypedEditorUsesPopupAndCheckbox(testCase)
@@ -387,12 +680,18 @@ end
 
 function testCompleteOptionCatalogs(testCase)
     types = {'chunk','cluster','vx','massx','network2d'};
-    minimumCounts = [6, 19, 2, 7, 34];
+    minimumCounts = [6, 19, 2, 17, 34];
     for i = 1:numel(types)
         catalog = pd_option_catalog(types{i});
         verifyGreaterThanOrEqual(testCase, numel(catalog), minimumCounts(i));
         request = pd_create_request(types{i});
-        request = pd_apply_analysis_options(request, catalog, pd_catalog_table_data(catalog));
+        data = pd_catalog_table_data(catalog);
+        if strcmp(types{i}, 'massx')
+            data = setTableValue(data, 'InitialDensity', '1');
+            data = setTableValue(data, 'ParticleSpacing', '0.1');
+            data = setTableValue(data, 'TransverseWidth', '1');
+        end
+        request = pd_apply_analysis_options(request, catalog, data);
         verifyEqual(testCase, request.analysisType, types{i});
     end
 end
@@ -549,6 +848,12 @@ function testPreflightRejectsWrongInputType(testCase)
     verifyError(testCase, @() postdata_run(request), 'postdata:PreflightMissingVariable');
 end
 
+function testMassXPreflightRequiresParticleCount(testCase)
+    request = makeRequest(testCase, 'massx', 'vx_chunk_test.txt');
+    verifyError(testCase, @() postdata_run(request), ...
+        'postdata:PreflightMissingVariable');
+end
+
 function testCancellationBeforeAnalysis(testCase)
     request = makeRequest(testCase, 'chunk', 'bin2d_dx_0.5_dy_0.5_Lz_1.txt');
     request.execution.cancelCallback = @() true;
@@ -664,6 +969,8 @@ function testConfigurationUpgrade(testCase)
     verifyEqual(testCase, config.selectionValue, '3');
     verifyEqual(testCase, size(config.computeData, 1), numel(pd_option_catalog('network2d')));
     verifyEqual(testCase, size(config.plotData, 1), numel(pd_plot_option_catalog()));
+    verifyEqual(testCase, size(config.outputData, 1), numel(pd_output_option_catalog()));
+    verifyTrue(testCase, config.copyPlotDataHeaders);
 end
 
 function testSemanticOptionValidation(testCase)
@@ -754,12 +1061,43 @@ function testAppAllViewsDashboard(testCase)
     app.CurrentResult = postdata_run(request);
     app.updatePlotViewChoices();
     app.replotCurrentResult([], []);
-    verifyEqual(testCase, numel(app.PlotAxes), 2);
+    verifyEqual(testCase, numel(app.PlotAxes), 3);
     verifyTrue(testCase, all(ishghandle(app.PlotAxes)));
-    verifyEqual(testCase, app.PlotViewIds, {'all','cumulative','differential'});
-    verifyEqual(testCase, numel(app.PlotFigureHandles), 2);
+    verifyEqual(testCase, app.PlotViewIds, ...
+        {'all','cumulative','differential','particle-count'});
+    verifyEqual(testCase, numel(app.PlotFigureHandles), 3);
     verifyTrue(testCase, all(ishghandle(app.PlotFigureHandles)));
     verifyTrue(testCase, all(ishghandle(app.PlotFigureAxes)));
+end
+
+function testAppPlotDataInspectorPagination(testCase)
+    assumeTrue(testCase, exist('PostDataApp', 'class') == 8, ...
+        'GUI tests are intentionally excluded from the non-GUI POST_DATA sync.');
+    previousVisible = get(0, 'DefaultFigureVisible');
+    set(0, 'DefaultFigureVisible', 'off');
+    app = PostDataApp();
+    cleanupObj = onCleanup(@() cleanupAppFigure(app, previousVisible)); %#ok<NASGU>
+
+    count = 1201;
+    app.CurrentResult = struct('analysisType', 'chunk', ...
+        'x', (1:count).', 'y', [], 'value', (1001:1000 + count).', ...
+        'variableUsed', 'syntheticValue', 'timestep', 25, ...
+        'filePath', 'synthetic.txt');
+    app.updatePlotViewChoices();
+
+    verifyEqual(testCase, get(app.PlotDataCopyHeadersCheckbox, 'Value'), 1);
+    verifyEqual(testCase, app.PlotDataViewIds, {'field','histogram'});
+    verifyEqual(testCase, app.CurrentPlotData.RowCount, count);
+    verifyEqual(testCase, size(get(app.PlotDataTable, 'Data'), 1), 500);
+    verifyEqual(testCase, app.PlotDataPage, 1);
+    app.changePlotDataPage(1);
+    verifyEqual(testCase, app.PlotDataPage, 2);
+    verifyEqual(testCase, size(get(app.PlotDataTable, 'Data'), 1), 500);
+    app.changePlotDataPage(1);
+    verifyEqual(testCase, app.PlotDataPage, 3);
+    verifyEqual(testCase, size(get(app.PlotDataTable, 'Data'), 1), 201);
+    app.selectPlotDataRows([], struct('Indices', [1 1; 3 2]));
+    verifyEqual(testCase, app.PlotDataSelectedRows, [1001 1003]);
 end
 
 function testAppExampleDataWorkflow(testCase)
@@ -795,6 +1133,24 @@ function testAppExampleDataWorkflow(testCase)
     app.loadExample('massx');
     request = app.buildRequest();
     verifyEqual(testCase, request.analysisType, 'massx');
+    verifyEqual(testCase, pd_get_analysis_option(request.analysisOptions, ...
+        'InitialDensity', NaN), 7.3, 'AbsTol', 1e-12);
+    verifyEqual(testCase, pd_get_analysis_option(request.analysisOptions, ...
+        'CoordinateFactor', NaN), 10, 'AbsTol', 1e-12);
+    computeData = get(app.ComputeTable, 'Data');
+    densityRow = find(strcmp('InitialDensity', computeData(:, 1)), 1, 'first');
+    spacingRow = find(strcmp('ParticleSpacing', computeData(:, 1)), 1, 'first');
+    transverseRow = find(strcmp('TransverseWidth', computeData(:, 1)), 1, 'first');
+    verifyEqual(testCase, computeData{densityRow, 2}, '7.3');
+    verifyEqual(testCase, computeData{spacingRow, 2}, '0.005');
+    verifyEqual(testCase, computeData{transverseRow, 2}, '2.46');
+
+    app.loadExample('massx2d');
+    request = app.buildRequest();
+    verifyEqual(testCase, pd_get_analysis_option(request.analysisOptions, ...
+        'ChunkDim', ''), '2d');
+    verifyEqual(testCase, pd_get_analysis_option(request.analysisOptions, ...
+        'SliceCentersY', []), [0.6 1.2 1.8], 'AbsTol', 1e-12);
 
     app.loadExample('vx');
     request = app.buildRequest();
@@ -845,9 +1201,27 @@ function testGeneratedLargeOneDimensionalTwoDimensionalAndClusterData(testCase)
     massX.selection.value = 2;
     massX.progressMode = 'off';
     massX.makePlots = false;
+    massX.analysisOptions = {'ChunkDim', '1d', 'InitialDensity', 7.3, ...
+        'ParticleSpacing', 0.005, 'RawLengthUnitUm', 10, ...
+        'TransverseWidth', 2.46, 'CoordinateFactor', 10};
     massXResult = postdata_run(massX);
     verifyEqual(testCase, numel(massXResult.coordinate), 401);
-    verifyGreaterThan(testCase, massXResult.cumulativeDensity(1, end), 0);
+    verifyGreaterThan(testCase, massXResult.cumulativeDensity(1), 0);
+    verifyTrue(testCase, massXResult.isMonotonicDecreasing);
+
+    massX2d = pd_create_request('mass-x');
+    massX2d.filePath = fullfile(generatedDir, ...
+        'large_bin2d_dx_0.05_dy_0.06_Lz_1.txt');
+    massX2d.selection.value = 2;
+    massX2d.progressMode = 'off';
+    massX2d.makePlots = false;
+    massX2d.analysisOptions = {'ChunkDim', '2d', 'InitialDensity', 7.3, ...
+        'ParticleSpacing', 0.01, 'RawLengthUnitUm', 10, ...
+        'CoordinateFactor', 10, 'SliceCentersY', [0.6 1.2 1.8], ...
+        'SliceWidthsY', 0.6};
+    massX2dResult = postdata_run(massX2d);
+    verifyEqual(testCase, size(massX2dResult.cumulativeDensity), [61 3]);
+    verifyTrue(testCase, all(massX2dResult.isMonotonicDecreasing));
 
     massV = pd_create_request('mass-v');
     massV.filePath = fullfile(generatedDir, 'large_mass_v.txt');
@@ -880,6 +1254,26 @@ function testDetailCsvDispatch(testCase)
         verifyGreaterThanOrEqual(testCase, numel(files), 1);
         verifyTrue(testCase, all(cellfun(@(p) exist(p, 'file') == 2, files)));
     end
+end
+
+function testResultExportIncludesAllPlotDataCsvFiles(testCase)
+    request = makeRequest(testCase, 'massx', 'bin1d_dx_0.5.txt');
+    result = postdata_run(request);
+    outputDir = tempname;
+    mkdir(outputDir);
+    cleanupObj = onCleanup(@() cleanupDirectory(outputDir)); %#ok<NASGU>
+    catalog = pd_output_option_catalog(outputDir);
+    data = pd_catalog_table_data(catalog);
+    data = setTableValue(data, 'SaveMAT', 'false');
+    data = setTableValue(data, 'SaveCSV', 'false');
+    data = setTableValue(data, 'SaveDetailCSV', 'false');
+    data = setTableValue(data, 'SavePlotDataCSV', 'true');
+    data = setTableValue(data, 'SavePNG', 'false');
+    data = setTableValue(data, 'SaveManifest', 'false');
+    options = pd_output_options_from_table(catalog, data);
+    files = pd_export_result(result, [], options);
+    verifyEqual(testCase, numel(files), numel(pd_result_plot_views(result)));
+    verifyTrue(testCase, all(cellfun(@(p) exist(p, 'file') == 2, files)));
 end
 
 function testFigPdfAndManifestExport(testCase)
@@ -1331,6 +1725,15 @@ function request = makeRequest(testCase, analysisType, fileName)
     request.filePath = fileName;
     request.progressMode = 'off';
     request.makePlots = false;
+    if strcmp(pd_normalize_analysis_type(analysisType), 'massx')
+        request.analysisOptions = sampleMassXOptions();
+    end
+end
+
+function options = sampleMassXOptions()
+    options = {'ChunkDim', '1d', 'InitialDensity', 1, ...
+        'ParticleSpacing', 0.1, 'RawLengthUnitUm', 10, ...
+        'TransverseWidth', 1, 'CoordinateFactor', 10};
 end
 
 function data = setTableValue(data, name, value)

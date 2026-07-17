@@ -1,5 +1,5 @@
 function out = analyze_chunk_field(chunkFile, varargin)
-%ANALYZE_CHUNK_FIELD Analyze one variable on 1D/2D chunk data at selected timestep.
+%ANALYZE_CHUNK_FIELD Analyze one variable on 1D/2D/3D chunk data.
 %   out = ANALYZE_CHUNK_FIELD(chunkFile, ...)
 %
 % Core behavior:
@@ -8,12 +8,13 @@ function out = analyze_chunk_field(chunkFile, varargin)
 %    T, vx, vy, vz, velocity, pressure, density,
 %    Sxx, Syy, Szz, Sxy, Sxz, Syz, vonMisesS,
 %    gradient / grad:<var>, strainRate
-%    (all based on compute_temp_stress_chunk results).
+%    Raw SPH fields are used directly. MD-derived density, pressure, and
+%    stress use compute_temp_stress_chunk and require dV.
 % 3) Otherwise throw error.
 
     p = inputParser;
     p.addRequired('chunkFile', @isTextScalar);
-    p.addParameter('ChunkDim', 'auto', @isTextScalar); % auto, 1d, or 2d
+    p.addParameter('ChunkDim', 'auto', @isTextScalar); % auto, 1d, 2d, or 3d
     p.addParameter('Variable', 'c_rho', @isTextScalar);
 
     p.addParameter('SelectBy', 'Index', @isTextScalar);
@@ -27,12 +28,13 @@ function out = analyze_chunk_field(chunkFile, varargin)
     p.addParameter('ProgressCallback', @(fraction, message) [], ...
         @(x) isa(x, 'function_handle'));
 
-    p.addParameter('dV', [], @isnumeric);        % required for stress/vonMises
+    p.addParameter('dV', [], @isnumeric); % MD density/pressure/stress only
     p.addParameter('DoPlot', true, @islogical);
     p.addParameter('PlotOptions', {}, @iscell);  % passed to plot_cloud2d/plot_line1d
     p.addParameter('CoordScale', 1, @isnumeric);
     p.addParameter('CoordRangeX', [], @isnumeric);
     p.addParameter('CoordRangeY', [], @isnumeric);
+    p.addParameter('CoordRangeZ', [], @isnumeric);
     p.addParameter('GradientVariable', '', @isTextScalar);
     p.addParameter('GradientSmoothLevel', 0, @isnumeric);
     p.addParameter('StrainRateVelocityComponent', 'vz', @isTextScalar);
@@ -74,29 +76,31 @@ function out = analyze_chunk_field(chunkFile, varargin)
     sourceType = 'raw';
     computedPack = [];
 
-    [x, y, coordOk, coordMsg] = extractCoordinates(D, col, opt.ChunkDim);
+    [x, y, coordZ, coordOk, coordMsg] = ...
+        extractCoordinates(D, col, opt.ChunkDim);
     if isfield(col, varReq)
-        z = D(:, col.(varReq));
+        value = D(:, col.(varReq));
         yLabel = varReqRaw;
     else
         sourceType = 'derived';
         if isGradientRequest(varReqRaw)
             ensureOneDimensionalWithCoordinates(opt, coordOk, coordMsg, varReqRaw);
             xForDerivative = x .* opt.CoordScale;
-            [z, yLabel, computedPack] = computeGradientDerived(varReqRaw, D, col, ...
+            [value, yLabel, computedPack] = computeGradientDerived(varReqRaw, D, col, ...
                 chunkFile, selectorArgs, opt.dV, xForDerivative, opt);
         elseif isStrainRateRequest(varReqRaw)
             ensureOneDimensionalWithCoordinates(opt, coordOk, coordMsg, varReqRaw);
             xForDerivative = x .* opt.CoordScale;
-            [z, yLabel, computedPack] = computeStrainRateDerived(D, col, ...
+            [value, yLabel, computedPack] = computeStrainRateDerived(D, col, ...
                 chunkFile, selectorArgs, opt.dV, xForDerivative, opt);
         else
-            [z, yLabel, computedPack] = computeDerived(varReqRaw, D, col, chunkFile, selectorArgs, opt.dV);
+            [value, yLabel, computedPack] = computeDerived(varReqRaw, D, col, chunkFile, selectorArgs, opt.dV);
         end
     end
 
     if coordOk
-        [x, y, z] = applyCoordinateTransformAndRange(x, y, z, opt);
+        [x, y, coordZ, value] = ...
+            applyCoordinateTransformAndRange(x, y, coordZ, value, opt);
     end
 
     fig = [];
@@ -110,25 +114,44 @@ function out = analyze_chunk_field(chunkFile, varargin)
             dimTag = lower(strtrim(opt.ChunkDim));
 
             if strcmp(dimTag, '1d')
-                validPlot = isfinite(x) & isfinite(z);
+                validPlot = isfinite(x) & isfinite(value);
                 if any(validPlot)
-                    [fig, ax, plotOut] = plot_line1d(x, z, ...
+                    [fig, ax, plotOut] = plot_line1d(x, value, ...
                         'Title', ttl, 'XLabel', 'x', 'YLabel', yLabel, opt.PlotOptions{:});
                 else
                     warning('analyze_chunk_field:SkipPlotNoFiniteData', ...
                         'No finite x/z data found. Skip 1D plotting.');
                 end
             elseif strcmp(dimTag, '2d')
-                validPlot = isfinite(x) & isfinite(y) & isfinite(z);
+                validPlot = isfinite(x) & isfinite(y) & isfinite(value);
                 if any(validPlot)
-                    [fig, ax, plotOut] = plot_cloud2d(x, y, z, ...
+                    [fig, ax, plotOut] = plot_cloud2d(x, y, value, ...
                         'Title', ttl, 'XLabel', 'x', 'YLabel', 'y', 'ColorbarLabel', yLabel, opt.PlotOptions{:});
                 else
                     warning('analyze_chunk_field:SkipPlotNoFiniteData', ...
                         'No finite x/y/z data found. Skip 2D plotting.');
                 end
+            elseif strcmp(dimTag, '3d')
+                validPlot = isfinite(x) & isfinite(y) & ...
+                    isfinite(coordZ) & isfinite(value);
+                if any(validPlot)
+                    fig = figure('Name', ttl);
+                    ax = axes('Parent', fig);
+                    plotOut = scatter3(ax, x(validPlot), y(validPlot), ...
+                        coordZ(validPlot), 36, value(validPlot), 'filled');
+                    xlabel(ax, 'x');
+                    ylabel(ax, 'y');
+                    zlabel(ax, 'z');
+                    title(ax, ttl, 'Interpreter', 'none');
+                    colorbar('peer', ax);
+                    grid(ax, 'on');
+                else
+                    warning('analyze_chunk_field:SkipPlotNoFiniteData', ...
+                        'No finite x/y/z/value data found. Skip 3D plotting.');
+                end
             else
-                error('analyze_chunk_field:BadChunkDim', 'ChunkDim must be ''1d'' or ''2d''.');
+                error('analyze_chunk_field:BadChunkDim', ...
+                    'ChunkDim must be ''1d'', ''2d'', or ''3d''.');
             end
         end
     end
@@ -146,10 +169,17 @@ function out = analyze_chunk_field(chunkFile, varargin)
     out.dimension = resolvedDimension;
     out.x = x;
     out.y = y;
-    out.value = z;
+    out.coordZ = coordZ;
+    out.value = value;
     out.coordScale = opt.CoordScale;
     out.coordRangeX = opt.CoordRangeX;
     out.coordRangeY = opt.CoordRangeY;
+    out.coordRangeZ = opt.CoordRangeZ;
+    out.physicalTime = step.physicalTime;
+    out.inputFormat = step.inputFormat;
+    out.unitSystem = step.unitSystem;
+    out.taskName = step.taskName;
+    out.chunkKind = step.chunkKind;
     out.derivedSource = computedPack;
     out.figure = fig;
     out.axes = ax;
@@ -158,9 +188,16 @@ end
 
 function dimension = resolveChunkDimension(requested, col)
     hasY = isfield(col, 'Coord2') || isfield(col, 'c_y');
+    hasZ = isfield(col, 'Coord3') || isfield(col, 'c_z');
     switch lower(strtrim(requested))
         case 'auto'
-            if hasY, dimension = '2d'; else, dimension = '1d'; end
+            if hasZ
+                dimension = '3d';
+            elseif hasY
+                dimension = '2d';
+            else
+                dimension = '1d';
+            end
         case '1d'
             dimension = '1d';
         case '2d'
@@ -170,9 +207,15 @@ function dimension = resolveChunkDimension(requested, col)
                      'for one-dimensional chunk data.']);
             end
             dimension = '2d';
+        case '3d'
+            if ~hasY || ~hasZ
+                error('analyze_chunk_field:MissingCoord3', ...
+                    'ChunkDim is 3d, but Coord2/Coord3 coordinates are absent.');
+            end
+            dimension = '3d';
         otherwise
             error('analyze_chunk_field:BadChunkDim', ...
-                'ChunkDim must be auto, 1d, or 2d.');
+                'ChunkDim must be auto, 1d, 2d, or 3d.');
     end
 end
 
@@ -183,6 +226,7 @@ function validateCoordOptions(opt)
     end
     validateRange(opt.CoordRangeX, 'CoordRangeX');
     validateRange(opt.CoordRangeY, 'CoordRangeY');
+    validateRange(opt.CoordRangeZ, 'CoordRangeZ');
 end
 
 function validateGradientOptions(opt)
@@ -203,25 +247,38 @@ function validateRange(v, name)
     end
 end
 
-function [x, y, z] = applyCoordinateTransformAndRange(x, y, z, opt)
+function [x, y, coordZ, value] = ...
+        applyCoordinateTransformAndRange(x, y, coordZ, value, opt)
     x = x .* opt.CoordScale;
     if ~isempty(y)
         y = y .* opt.CoordScale;
     end
+    if ~isempty(coordZ)
+        coordZ = coordZ .* opt.CoordScale;
+    end
 
-    mask = true(size(z));
+    mask = true(size(value));
     if ~isempty(opt.CoordRangeX)
         mask = mask & (x >= opt.CoordRangeX(1)) & (x <= opt.CoordRangeX(2));
     end
-    if strcmpi(opt.ChunkDim, '2d') && ~isempty(opt.CoordRangeY) && ~isempty(y)
+    if any(strcmpi(opt.ChunkDim, {'2d','3d'})) && ...
+            ~isempty(opt.CoordRangeY) && ~isempty(y)
         mask = mask & (y >= opt.CoordRangeY(1)) & (y <= opt.CoordRangeY(2));
+    end
+    if strcmpi(opt.ChunkDim, '3d') && ...
+            ~isempty(opt.CoordRangeZ) && ~isempty(coordZ)
+        mask = mask & (coordZ >= opt.CoordRangeZ(1)) & ...
+            (coordZ <= opt.CoordRangeZ(2));
     end
 
     x = x(mask);
     if ~isempty(y)
         y = y(mask);
     end
-    z = z(mask);
+    if ~isempty(coordZ)
+        coordZ = coordZ(mask);
+    end
+    value = value(mask);
 end
 
 function tf = isGradientRequest(varReqRaw)
@@ -682,7 +739,7 @@ function assertPressureComputed(c, alias)
     end
 end
 
-function [x, y, ok, msg] = extractCoordinates(D, col, chunkDim)
+function [x, y, coordZ, ok, msg] = extractCoordinates(D, col, chunkDim)
     ok = true;
     msg = '';
     if isfield(col, 'Coord1')
@@ -694,23 +751,40 @@ function [x, y, ok, msg] = extractCoordinates(D, col, chunkDim)
     else
         x = [];
         y = [];
+        coordZ = [];
         ok = false;
         msg = 'Missing x column (Coord1/c_x/Chunk). Skip plotting.';
         return;
     end
 
-    if strcmpi(strtrim(chunkDim), '2d')
+    if any(strcmpi(strtrim(chunkDim), {'2d','3d'}))
         if isfield(col, 'Coord2')
             y = D(:, col.Coord2);
         elseif isfield(col, 'c_y')
             y = D(:, col.c_y);
         else
             y = [];
+            coordZ = [];
             ok = false;
-            msg = '2D mode requires y column (Coord2/c_y). Skip plotting.';
+            msg = '2D/3D mode requires y column (Coord2/c_y). Skip plotting.';
+            return;
         end
     else
         y = [];
+    end
+
+    if strcmpi(strtrim(chunkDim), '3d')
+        if isfield(col, 'Coord3')
+            coordZ = D(:, col.Coord3);
+        elseif isfield(col, 'c_z')
+            coordZ = D(:, col.c_z);
+        else
+            coordZ = [];
+            ok = false;
+            msg = '3D mode requires z column (Coord3/c_z). Skip plotting.';
+        end
+    else
+        coordZ = [];
     end
 end
 

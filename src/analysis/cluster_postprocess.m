@@ -95,12 +95,12 @@ function result = cluster_postprocess(clusterPath, varargin)
     end
 
     mask = true(size(stepData, 1), 1);
-    mask = applyRange(mask, stepData, col, 'c_x', opt.Range_c_x);
-    mask = applyRange(mask, stepData, col, 'c_y', opt.Range_c_y);
-    mask = applyRange(mask, stepData, col, 'c_z', opt.Range_c_z);
-    mask = applyRange(mask, stepData, col, 'vx',  opt.Range_vx);
-    mask = applyRange(mask, stepData, col, 'vy',  opt.Range_vy);
-    mask = applyRange(mask, stepData, col, 'vz',  opt.Range_vz);
+    mask = applyRange(mask, stepData, col, {'c_x','x'}, opt.Range_c_x);
+    mask = applyRange(mask, stepData, col, {'c_y','y'}, opt.Range_c_y);
+    mask = applyRange(mask, stepData, col, {'c_z','z'}, opt.Range_c_z);
+    mask = applyRange(mask, stepData, col, {'vx'}, opt.Range_vx);
+    mask = applyRange(mask, stepData, col, {'vy'}, opt.Range_vy);
+    mask = applyRange(mask, stepData, col, {'vz'}, opt.Range_vz);
 
     dataSel = stepData(mask, :);
     ncount = dataSel(:, col.(opt.NcountVar));
@@ -121,6 +121,11 @@ function result = cluster_postprocess(clusterPath, varargin)
         result.selection = selectionInfo;
         result.timestep = step.timestep;
         result.stepIndex = stepIdx;
+        result.physicalTime = step.physicalTime;
+        result.inputFormat = step.inputFormat;
+        result.unitSystem = step.unitSystem;
+        result.taskName = step.taskName;
+        result.chunkKind = step.chunkKind;
         result.totalRows = size(stepData, 1);
         result.selectedRows = 0;
         result.colIndex = col;
@@ -144,7 +149,7 @@ function result = cluster_postprocess(clusterPath, varargin)
     histData = buildHistogramData(diameter, opt.DiameterRange, ...
         opt.DiameterHistBinSize, opt.DiameterFitTypes, opt.DiameterEmptyBinMode);
 
-    xVarName = matlab.lang.makeValidName(opt.XVarForMean);
+    xVarName = resolveClusterVariable(col, opt.XVarForMean);
     meanBin = struct('edges', [], 'centers', [], 'meanDiameter', [], 'count', []);
     hasMeanX = isfield(col, xVarName);
     if hasMeanX
@@ -179,6 +184,11 @@ function result = cluster_postprocess(clusterPath, varargin)
     result.selection = selectionInfo;
     result.timestep = step.timestep;
     result.stepIndex = stepIdx;
+    result.physicalTime = step.physicalTime;
+    result.inputFormat = step.inputFormat;
+    result.unitSystem = step.unitSystem;
+    result.taskName = step.taskName;
+    result.chunkKind = step.chunkKind;
     result.totalRows = size(stepData, 1);
     result.selectedRows = size(dataSel, 1);
     result.colIndex = col;
@@ -219,13 +229,15 @@ function info = buildSelectionInfo(step, opt)
     end
 end
 
-function mask = applyRange(mask, data, col, varName, rangeVal)
+function mask = applyRange(mask, data, col, candidates, rangeVal)
     if isempty(rangeVal)
         return;
     end
-    if ~isfield(col, varName)
+    varName = resolveFirstColumn(col, candidates);
+    if isempty(varName)
         warning('cluster_postprocess:MissingFilterVar', ...
-            'Filter variable "%s" not found. Ignore this range filter.', varName);
+            'Filter variable "%s" not found. Ignore this range filter.', ...
+            strjoin(candidates, '/'));
         return;
     end
     if numel(rangeVal) ~= 2
@@ -300,6 +312,30 @@ function model = buildClusterSizeModel(opt)
         model.volumePerParticle = particleVolume;
         model.projectedAreaPerParticle = particleVolume / thinThickness;
         model.diameterDefinition = 'area=Ncount*ParticleVolume/ThinDirectionThickness';
+    end
+end
+
+function name = resolveClusterVariable(col, requested)
+    requested = matlab.lang.makeValidName(toChar(requested));
+    candidates = {requested};
+    switch requested
+        case 'c_x'
+            candidates = {'c_x','x'};
+        case 'c_y'
+            candidates = {'c_y','y'};
+        case 'c_z'
+            candidates = {'c_z','z'};
+    end
+    name = resolveFirstColumn(col, candidates);
+end
+
+function name = resolveFirstColumn(col, candidates)
+    name = '';
+    for i = 1:numel(candidates)
+        if isfield(col, candidates{i})
+            name = candidates{i};
+            return;
+        end
     end
 end
 

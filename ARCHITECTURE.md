@@ -13,7 +13,7 @@ app      -> core, postdata_run, plot, export
 postdata_run -> core, io, analysis
 analysis -> io
 plot     -> core
-export   -> core
+export   -> core, plot
 io/core  -> MATLAB only
 ```
 
@@ -50,14 +50,32 @@ cancellation, rebuild corrupt/stale sidecars, write caches atomically, and
 return the in-memory index so analysis never depends on cache persistence. This
 module does not contain analysis formulas.
 
+Legacy and current SPID chunk files share `pd_read_chunk_preamble` and
+`pd_read_next_chunk_frame_header`. No caller assumes a fixed header length.
+Current SPID metadata (`Units`, `Name`, `Kind`) and per-frame physical time are
+preserved in reader, preflight, and result contracts. Unit conversion is
+centralized in `pd_spid_unit_info`; files without explicit unit metadata keep
+the legacy manual conversion behavior.
+
 ### `src/analysis`
 
 Owns numerical calculations. Each analyzer accepts explicit values and returns
 a result structure. `network2d` has its own submodule because its grid,
 geometry, topology, profile, and evolution concerns are substantially larger.
-Mass-vx and mass-x both delegate density-column resolution, total-mass
-reconstruction, sorting, and directional accumulation to
-`pd_cumulative_areal_density`; analysis adapters only define their coordinate.
+Mass-v delegates areal-density column resolution, total-mass reconstruction,
+sorting, and directional accumulation to `pd_cumulative_areal_density`.
+Current SPID spatial output is accepted in 1D, 2D, and 3D; field output uses
+`Coord1` as its coordinate; cluster output accepts `x/y/z` while retaining
+legacy `c_x/c_y/c_z` aliases.
+SPH mass-x is intentionally separate: it accepts only chunk particle counts,
+derives `rho0*d0^2` planar particle line mass for 2D SPH or `rho0*d0^3`
+particle mass for 3D SPH, normalizes by y width (and z width for 3D), and
+supports fractional-overlap y slices for bin2d data. Chunk dimension and SPH
+physical dimension are independent parameters. Display coordinate scaling is
+not used as a substitute for the raw physical length unit.
+Raw SPH fields bypass MD conservation-law derivation. The `dV` option belongs
+exclusively to the MD-derived-quantity path; each MD formula decides whether it
+algebraically consumes that value. SPH mass-x never uses `dV`.
 Shared descriptive statistics live in `analysis/common`; network evolution
 selection and aggregation live in `network2d/pd_network_build_evolution`, while
 the snapshot callback remains responsible for physical calculations.
@@ -94,6 +112,10 @@ from calculation parameters, so replotting does not repeat calculations.
 `pd_result_plot_views` declares the views available from each result contract;
 the application can render one selected view or arrange every available view
 as a dashboard without adding graphics logic to analyzers.
+`pd_result_plot_data` is the single numeric contract for each view. Derived
+histograms, CDFs, directional means, mass curves, and flattened grids are built
+there once; the renderer, paged GUI inspector, clipboard service, and CSV
+exporter consume the same values.
 `UpdateMode=replace|overlay` controls whether caller-owned axes are reset or
 receive an additional labeled result layer. Network2d standalone snapshot and
 evolution figures are implemented in `pd_render_network2d_snapshot` and
@@ -102,8 +124,9 @@ calls. Fixed plot options expose allowed values to the R2016b typed GUI editor.
 
 ### `src/export`
 
-Owns result summaries, analysis-specific detail tables, MAT/CSV/PNG/FIG/PDF
-output, reproducibility manifests, and collision-free file naming. A complete
+Owns result summaries, analysis-specific detail tables, per-view plot-data CSV,
+MAT/CSV/PNG/FIG/PDF output, reproducibility manifests, and collision-free file
+naming. A complete
 export is first built in an isolated staging directory and committed only after
 every requested format succeeds. Export settings are independent from analysis
 and plotting settings.
@@ -113,7 +136,8 @@ and plotting settings.
 1. Add calculation options to `pd_option_catalog`.
 2. Implement the calculation in `src/analysis`.
 3. Add one dispatch case to `postdata_run` only when adding a new analysis type.
-4. Add rendering in `pd_render_result` without changing calculation code.
+4. Add the numeric view contract in `pd_result_plot_data`, then render it in
+   `pd_render_result` without changing calculation code.
 5. Add output formats in `src/export` without changing analyzers or the GUI.
 6. Add integration tests in `tests/test_postdata.m`.
 

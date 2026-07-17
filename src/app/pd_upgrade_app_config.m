@@ -16,6 +16,16 @@ function config = pd_upgrade_app_config(config)
     config = addDefault(config, 'slurmPath', '');
     config = addDefault(config, 'progressMode', 'auto');
     config = addDefault(config, 'resultLevel', 'standard');
+    config = addDefault(config, 'copyPlotDataHeaders', true);
+    if ~(islogical(config.copyPlotDataHeaders) && ...
+            isscalar(config.copyPlotDataHeaders)) && ...
+            ~(isnumeric(config.copyPlotDataHeaders) && ...
+            isscalar(config.copyPlotDataHeaders) && ...
+            isfinite(config.copyPlotDataHeaders) && ...
+            any(config.copyPlotDataHeaders == [0 1]))
+        config.copyPlotDataHeaders = true;
+    end
+    config.copyPlotDataHeaders = logical(config.copyPlotDataHeaders);
 
     computeDefault = pd_catalog_table_data(pd_option_catalog(config.task));
     plotDefault = pd_catalog_table_data(pd_plot_option_catalog());

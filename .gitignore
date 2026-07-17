@@ -4,5 +4,6 @@ matlab_probe.txt
 selftest_output.txt
 selftest_error.txt
 outputs/
+verification/
 *.tmp
 *.bak

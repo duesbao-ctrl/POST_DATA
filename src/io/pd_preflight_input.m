@@ -10,33 +10,16 @@ function report = pd_preflight_input(request, filePath)
         error('postdata:PreflightOpenFailed', 'Cannot open input file: %s', filePath);
     end
     cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
-    header = cell(1, 3);
-    for i = 1:3
-        header{i} = fgetl(fid);
-        if ~ischar(header{i})
-            error('postdata:PreflightShortHeader', ...
-                'Input must contain at least three header lines.');
-        end
+    preamble = pd_read_chunk_preamble(fid, 'postdata:preflight');
+    frame = pd_read_next_chunk_frame_header(fid, 'postdata:preflight');
+    if frame.eof
+        error('postdata:PreflightMissingBlock', ...
+            'Input contains a chunk header but no timestep blocks.');
     end
-    blockLine = '';
-    while ischar(blockLine)
-        blockLine = fgetl(fid);
-        if ~ischar(blockLine), break; end
-        if ~isempty(strtrim(blockLine)), break; end
-    end
-    blockValues = sscanf(blockLine, '%f').';
-    if numel(blockValues) < 3 || ~all(isfinite(blockValues(1:3))) || ...
-            blockValues(2) < 0 || ...
-            abs(blockValues(2) - round(blockValues(2))) > 1e-12
-        error('postdata:PreflightBadBlockHeader', ...
-            ['First block header must contain a finite timestep, a non-negative ' ...
-             'integer row count, and a finite total count.']);
-    end
-
-    [variables, validNames] = pd_parse_chunk_variables( ...
-        header{3}, 'postdata:preflight');
+    variables = preamble.varNames;
+    validNames = preamble.validVarNames;
     firstDataColumns = 0;
-    if blockValues(2) > 0
+    if frame.numChunks > 0
         firstDataLine = fgetl(fid);
         while ischar(firstDataLine) && isempty(strtrim(firstDataLine))
             firstDataLine = fgetl(fid);
@@ -73,11 +56,17 @@ function report = pd_preflight_input(request, filePath)
     report.fileSize = after.bytes;
     report.fileDatenum = after.datenum;
     report.analysisType = request.analysisType;
-    report.headerLines = header;
+    report.headerLines = preamble.headerLines;
+    report.metadata = preamble.metadata;
+    report.inputFormat = preamble.metadata.inputFormat;
+    report.unitSystem = preamble.metadata.unitSystem;
+    report.taskName = preamble.metadata.name;
+    report.chunkKind = preamble.metadata.kind;
     report.variables = variables;
     report.validVariableNames = validNames;
-    report.firstTimestep = blockValues(1);
-    report.firstBlockRows = round(blockValues(2));
+    report.firstTimestep = frame.timestep;
+    report.firstPhysicalTime = frame.physicalTime;
+    report.firstBlockRows = frame.numChunks;
     report.firstDataColumns = firstDataColumns;
     report.warnings = warnings;
     report.passed = true;
@@ -87,7 +76,10 @@ function required = requiredVariables(request)
     required = {};
     switch request.analysisType
         case 'chunk'
-            if strcmpi(request.chunk.dimension, '2d')
+            if strcmpi(request.chunk.dimension, '3d')
+                required = {{'Coord1','c_x','Chunk'}, ...
+                    {'Coord2','c_y'}, {'Coord3','c_z'}};
+            elseif strcmpi(request.chunk.dimension, '2d')
                 required = {{'Coord1','c_x','Chunk'}, {'Coord2','c_y'}};
             else
                 required = {{'Coord1','c_x','Chunk'}};
@@ -96,8 +88,13 @@ function required = requiredVariables(request)
             required = {{pd_get_analysis_option(request.analysisOptions, 'NcountVar', 'Ncount')}};
         case 'vx'
             velocityVar = pd_get_analysis_option(request.analysisOptions, ...
-                'VelocityVar', 'Chunk');
-            required = {{matlab.lang.makeValidName(pd_to_char(velocityVar))}};
+                'VelocityVar', 'auto');
+            velocityVar = pd_to_char(velocityVar);
+            if strcmpi(strtrim(velocityVar), 'auto')
+                required = {{'Coord1','Chunk'}};
+            else
+                required = {{matlab.lang.makeValidName(velocityVar)}};
+            end
         case 'massx'
             coordinateVar = pd_get_analysis_option(request.analysisOptions, ...
                 'CoordinateVar', 'auto');
@@ -106,6 +103,22 @@ function required = requiredVariables(request)
                 required = {{'Coord1','c_x','Chunk'}};
             else
                 required = {{matlab.lang.makeValidName(coordinateVar)}};
+            end
+            ncount = pd_get_analysis_option(request.analysisOptions, ...
+                'NcountVar', 'Ncount');
+            required{end + 1} = {matlab.lang.makeValidName(pd_to_char(ncount))};
+            chunkDim = pd_get_analysis_option(request.analysisOptions, ...
+                'ChunkDim', 'auto');
+            if strcmpi(strtrim(pd_to_char(chunkDim)), '2d')
+                coordinateVarY = pd_get_analysis_option( ...
+                    request.analysisOptions, 'CoordinateVarY', 'auto');
+                coordinateVarY = pd_to_char(coordinateVarY);
+                if strcmpi(strtrim(coordinateVarY), 'auto')
+                    required{end + 1} = {'Coord2','c_y'};
+                else
+                    required{end + 1} = { ...
+                        matlab.lang.makeValidName(coordinateVarY)};
+                end
             end
         case 'network2d'
             ncount = pd_get_analysis_option(request.analysisOptions, 'NcountVar', 'Ncount');

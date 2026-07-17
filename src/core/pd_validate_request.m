@@ -67,6 +67,7 @@ function request = pd_validate_request(request)
     end
     chunkDefaults = struct('dimension', 'auto', 'variable', 'c_rho', ...
         'dV', [], 'coordScale', 1, 'coordRangeX', [], 'coordRangeY', [], ...
+        'coordRangeZ', [], ...
         'gradientVariable', '', 'gradientSmoothLevel', 0, ...
         'strainRateVelocityComponent', 'vz', ...
         'strainRateDensityVariable', 'c_rho', 'plotOptions', {{}});
@@ -225,6 +226,8 @@ function value = requestValue(request, target)
             value = request.chunk.coordRangeX;
         case 'chunk.coordRangeY'
             value = request.chunk.coordRangeY;
+        case 'chunk.coordRangeZ'
+            value = request.chunk.coordRangeZ;
         case 'chunk.gradientVariable'
             value = request.chunk.gradientVariable;
         case 'chunk.gradientSmoothLevel'

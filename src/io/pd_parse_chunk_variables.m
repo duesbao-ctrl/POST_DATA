@@ -22,7 +22,7 @@ function [varNames, validVarNames] = pd_parse_chunk_variables(headerLine, caller
     varNames = strsplit(text);
     if isempty(varNames) || (isscalar(varNames) && isempty(varNames{1}))
         error([callerId, ':NoVariableNames'], ...
-            'No variable names were found in the third header line.');
+            'No variable names were found in the chunk column header.');
     end
 
     validVarNames = matlab.lang.makeValidName(varNames);

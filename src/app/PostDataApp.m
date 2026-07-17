@@ -6,6 +6,7 @@ classdef PostDataApp < handle
         Figure
         FileEdit
         TaskPopup
+        TaskValues
         SelectionPopup
         SelectionEdit
         SlurmEdit
@@ -26,6 +27,7 @@ classdef PostDataApp < handle
         PlotFigureViewIds
         TabGroup
         VisualizationTab
+        PlotDataTab
         ComputeTab
         ComputeHeader
         ComputeTable
@@ -47,6 +49,18 @@ classdef PostDataApp < handle
         SelectedPlotParameterIndex
         OutputTable
         ResultTable
+        PlotDataViewPopup
+        PlotDataViewIds
+        PlotDataTable
+        PlotDataInfoText
+        PlotDataPageText
+        PlotDataPreviousButton
+        PlotDataNextButton
+        PlotDataCopyHeadersCheckbox
+        CurrentPlotData
+        PlotDataPage
+        PlotDataPageSize
+        PlotDataSelectedRows
         CurrentResult
         OptionCatalog
         PlotCatalog
@@ -79,6 +93,8 @@ classdef PostDataApp < handle
             obj.TabGroup = tabs;
             plotTab = uitab('Parent', tabs, 'Title', pd_ui_text('Result plots'));
             obj.VisualizationTab = plotTab;
+            plotDataTab = uitab('Parent', tabs, 'Title', pd_ui_text('Plot data'));
+            obj.PlotDataTab = plotDataTab;
             computeTab = uitab('Parent', tabs, 'Title', pd_ui_text('Calculation parameters'));
             obj.ComputeTab = computeTab;
             plotOptionTab = uitab('Parent', tabs, 'Title', pd_ui_text('Plot settings'));
@@ -95,7 +111,10 @@ classdef PostDataApp < handle
             set(sampleButton, 'TooltipString', pd_ui_text('Load ready-to-run test data for the current analysis type'));
 
             addLabel(controls, pd_ui_text('Analysis type'), 0.815);
-            obj.TaskPopup = addPopup(controls, {'chunk','network2d','cluster','vx','massx'}, ...
+            obj.TaskValues = {'chunk','network2d','cluster','vx','massx'};
+            taskLabels = cellfun(@analysisDescription, obj.TaskValues, ...
+                'UniformOutput', false);
+            obj.TaskPopup = addPopup(controls, taskLabels, ...
                 [0.04, 0.765, 0.92, 0.048], @(src, evt)obj.taskChanged(src, evt));
 
             addLabel(controls, pd_ui_text('Timestep selection mode'), 0.705);
@@ -144,15 +163,15 @@ classdef PostDataApp < handle
                 'Units', 'normalized', 'Position', [0.02, 0.935, 0.08, 0.035], ...
                 'HorizontalAlignment', 'left');
             obj.PlotViewPopup = addPopup(plotTab, {pd_ui_text('All views')}, ...
-                [0.10, 0.925, 0.19, 0.05], @(src, evt)obj.replotCurrentResult(src, evt));
+                [0.10, 0.925, 0.19, 0.05], @(src, evt)obj.plotViewChanged(src, evt));
             obj.PlotViewIds = {'all'};
             obj.PlotViewCountText = uicontrol('Parent', plotTab, 'Style', 'text', ...
                 'String', pd_ui_text('Not run yet'), 'Units', 'normalized', ...
-                'Position', [0.30, 0.935, 0.09, 0.035]);
+                'Position', [0.30, 0.935, 0.16, 0.035]);
             obj.OpenSeparateFiguresCheckbox = uicontrol('Parent', plotTab, ...
                 'Style', 'checkbox', 'String', pd_ui_text('Open separate figures after run'), ...
                 'Value', 1, 'Units', 'normalized', ...
-                'Position', [0.40, 0.925, 0.24, 0.05], ...
+                'Position', [0.47, 0.925, 0.17, 0.05], ...
                 'TooltipString', pd_ui_text('Open one scalable, savable MATLAB figure for each result by default'));
             addButton(plotTab, pd_ui_text('Open all figures'), [0.65, 0.925, 0.16, 0.05], ...
                 @(src, evt)obj.openAllPlotFigures(src, evt));
@@ -165,8 +184,59 @@ classdef PostDataApp < handle
                 'Units', 'normalized', 'Position', [0.01, 0.11, 0.98, 0.80]);
             obj.PlotAxes = axes('Parent', obj.PlotPanel, 'Units', 'normalized', ...
                 'Position', [0.09, 0.10, 0.84, 0.84]);
-            addButton(plotTab, pd_ui_text('Apply plot settings and refresh'), [0.36, 0.035, 0.28, 0.055], ...
+            addButton(plotTab, pd_ui_text('View plotted data'), [0.14, 0.035, 0.28, 0.055], ...
+                @(src, evt)obj.showPlotDataTab(src, evt));
+            addButton(plotTab, pd_ui_text('Apply plot settings and refresh'), [0.58, 0.035, 0.28, 0.055], ...
                 @(src, evt)obj.replotCurrentResult(src, evt));
+
+            obj.PlotDataPageSize = 500;
+            obj.PlotDataPage = 1;
+            obj.PlotDataSelectedRows = [];
+            obj.CurrentPlotData = [];
+            uicontrol('Parent', plotDataTab, 'Style', 'text', ...
+                'String', pd_ui_text('Data view'), 'Units', 'normalized', ...
+                'Position', [0.02, 0.935, 0.08, 0.035], ...
+                'HorizontalAlignment', 'left');
+            obj.PlotDataViewPopup = addPopup(plotDataTab, {pd_ui_text('Not run yet')}, ...
+                [0.10, 0.925, 0.27, 0.05], ...
+                @(src, evt)obj.plotDataViewChanged(src, evt));
+            obj.PlotDataViewIds = {};
+            obj.PlotDataPreviousButton = addButton(plotDataTab, ...
+                pd_ui_text('Previous page'), [0.39, 0.925, 0.12, 0.05], ...
+                @(src, evt)obj.changePlotDataPage(-1));
+            obj.PlotDataPageText = uicontrol('Parent', plotDataTab, ...
+                'Style', 'text', 'String', pd_ui_text('Page 0 of 0'), ...
+                'Units', 'normalized', 'Position', [0.52, 0.935, 0.12, 0.035]);
+            obj.PlotDataNextButton = addButton(plotDataTab, ...
+                pd_ui_text('Next page'), [0.65, 0.925, 0.12, 0.05], ...
+                @(src, evt)obj.changePlotDataPage(1));
+            obj.PlotDataCopyHeadersCheckbox = uicontrol('Parent', plotDataTab, ...
+                'Style', 'checkbox', ...
+                'String', pd_ui_text('Include column headers when copying'), ...
+                'Value', 1, 'Units', 'normalized', ...
+                'Position', [0.79, 0.925, 0.19, 0.05], ...
+                'TooltipString', pd_ui_text( ...
+                    'Clear this option to copy numeric rows without column names.'));
+            obj.PlotDataInfoText = uicontrol('Parent', plotDataTab, ...
+                'Style', 'text', 'String', pd_ui_text('Run an analysis to inspect plot data.'), ...
+                'Units', 'normalized', 'Position', [0.02, 0.875, 0.96, 0.04], ...
+                'HorizontalAlignment', 'left');
+            obj.PlotDataTable = uitable('Parent', plotDataTab, ...
+                'Units', 'normalized', 'Position', [0.02, 0.12, 0.96, 0.74], ...
+                'ColumnName', {}, 'ColumnEditable', false, ...
+                'Data', cell(0, 0), ...
+                'CellSelectionCallback', @(src, evt)obj.selectPlotDataRows(src, evt));
+            addButton(plotDataTab, pd_ui_text('Copy selected rows'), ...
+                [0.10, 0.035, 0.22, 0.055], ...
+                @(src, evt)obj.copyPlotData(true));
+            addButton(plotDataTab, pd_ui_text('Copy all data'), ...
+                [0.39, 0.035, 0.22, 0.055], ...
+                @(src, evt)obj.copyPlotData(false));
+            addButton(plotDataTab, pd_ui_text('Export this view as CSV'), ...
+                [0.68, 0.035, 0.22, 0.055], ...
+                @(src, evt)obj.exportCurrentPlotData(src, evt));
+            set([obj.PlotDataPreviousButton,obj.PlotDataNextButton], ...
+                'Enable', 'off');
 
             obj.ComputeHeader = uicontrol('Parent', computeTab, 'Style', 'text', ...
                 'String', '', 'FontWeight', 'bold', 'HorizontalAlignment', 'left', ...
@@ -255,6 +325,8 @@ classdef PostDataApp < handle
                 'Callback', @(src, evt)obj.loadExample('cluster'));
             uimenu(sampleMenu, 'Label', pd_ui_text('mass-x cumulative distribution'), ...
                 'Callback', @(src, evt)obj.loadExample('massx'), 'Separator', 'on');
+            uimenu(sampleMenu, 'Label', pd_ui_text('mass-x 2D sliced distribution'), ...
+                'Callback', @(src, evt)obj.loadExample('massx2d'));
             uimenu(sampleMenu, 'Label', pd_ui_text('2D pore network'), ...
                 'Callback', @(src, evt)obj.loadExample('network2d'));
             uimenu(sampleMenu, 'Label', pd_ui_text('mass-v cumulative distribution'), ...
@@ -276,7 +348,7 @@ classdef PostDataApp < handle
         end
 
         function loadDefaultExample(obj, ~, ~)
-            task = popupValue(obj.TaskPopup);
+            task = obj.currentAnalysisType();
             if strcmp(task, 'chunk')
                 data = get(obj.ComputeTable, 'Data');
                 row = find(strcmp('ChunkDim', data(:, 1)), 1, 'first');
@@ -289,6 +361,22 @@ classdef PostDataApp < handle
                 kind = task;
             end
             obj.loadExample(kind);
+        end
+
+        function task = currentAnalysisType(obj)
+            index = get(obj.TaskPopup, 'Value');
+            index = max(1, min(index, numel(obj.TaskValues)));
+            task = obj.TaskValues{index};
+        end
+
+        function setAnalysisType(obj, value)
+            value = pd_normalize_analysis_type(value);
+            index = find(strcmp(value, obj.TaskValues), 1, 'first');
+            if isempty(index)
+                error('postdata:BadPopupValue', ...
+                    'Unsupported analysis type: %s', value);
+            end
+            set(obj.TaskPopup, 'Value', index);
         end
 
         function loadExample(obj, kind)
@@ -312,7 +400,20 @@ classdef PostDataApp < handle
                 case 'massx'
                     task = 'massx';
                     filePath = fullfile(generatedDir, 'large_bin1d_dx_0.025.txt');
-                    overrides = {};
+                    overrides = {'ChunkDim', '1d', 'SphDimension', 2, ...
+                        'InitialDensity', 7.3, ...
+                        'ParticleSpacing', 0.005, 'TransverseWidth', 2.46, ...
+                        'RawLengthUnitUm', 10, 'CoordinateFactor', 10};
+                case 'massx2d'
+                    task = 'massx';
+                    filePath = fullfile(generatedDir, ...
+                        'large_bin2d_dx_0.05_dy_0.06_Lz_1.txt');
+                    overrides = {'ChunkDim', '2d', 'SphDimension', 2, ...
+                        'InitialDensity', 7.3, ...
+                        'ParticleSpacing', 0.01, 'RawLengthUnitUm', 10, ...
+                        'CoordinateFactor', 10, ...
+                        'SliceCentersY', [0.6 1.2 1.8], ...
+                        'SliceWidthsY', 0.6};
                 case 'network2d'
                     task = 'network2d';
                     filePath = fullfile(generatedDir, ...
@@ -330,7 +431,7 @@ classdef PostDataApp < handle
                 error('postdata:MissingExampleData', ...
                     'Example data is missing: %s', filePath);
             end
-            setPopupValue(obj.TaskPopup, task);
+            obj.setAnalysisType(task);
             obj.taskChanged([], []);
             for i = 1:2:numel(overrides)
                 obj.setComputeOptionValue(overrides{i}, overrides{i + 1});
@@ -340,6 +441,7 @@ classdef PostDataApp < handle
             set(obj.SelectionEdit, 'String', '1');
             obj.selectionModeChanged([], []);
             set(obj.TabGroup, 'SelectedTab', obj.ComputeTab);
+            obj.updateRunButtonForParameters();
             obj.setStatus(sprintf(pd_ui_text('Loaded %s example. Review parameters and press F5 to run.'), ...
                 analysisDescription(task)), 'success');
         end
@@ -351,7 +453,8 @@ classdef PostDataApp < handle
                 error('postdata:MissingExampleOption', ...
                     'Example option is unavailable: %s', name);
             end
-            data{row, 2} = pd_format_option_value(value);
+            data{row, 2} = pd_format_option_editor_value( ...
+                value, obj.OptionCatalog(row).Type);
             set(obj.ComputeTable, 'Data', data);
             obj.updateDependencyDisplay();
         end
@@ -495,7 +598,7 @@ classdef PostDataApp < handle
         end
 
         function taskChanged(obj, source, ~)
-            task = popupValue(obj.TaskPopup);
+            task = obj.currentAnalysisType();
             if ~isempty(obj.ActiveAnalysisType) && ishghandle(obj.ComputeTable)
                 obj.OptionDataCache.(obj.ActiveAnalysisType) = get(obj.ComputeTable, 'Data');
             end
@@ -506,15 +609,25 @@ classdef PostDataApp < handle
             else
                 data = pd_catalog_table_data(obj.OptionCatalog);
             end
+            data = pd_normalize_catalog_table_data(obj.OptionCatalog, data);
             set(obj.ComputeTable, 'Data', data);
             obj.ActiveAnalysisType = task;
             obj.SelectedParameterIndex = [];
             obj.updateDependencyDisplay();
-            set(obj.ComputeHeader, 'String', sprintf('%s: %d editable calculation parameters', ...
+            set(obj.ComputeHeader, 'String', computeHeaderText( ...
                 task, numel(obj.OptionCatalog)));
+            if strcmp(task, 'massx')
+                row = find(strcmp('InitialDensity', {obj.OptionCatalog.Name}), ...
+                    1, 'first');
+                if ~isempty(row)
+                    obj.SelectedParameterIndex = row;
+                    obj.showSelectedParameter();
+                end
+            end
             if ~isempty(source) && ishghandle(obj.TabGroup) && ishghandle(obj.ComputeTab)
                 set(obj.TabGroup, 'SelectedTab', obj.ComputeTab);
             end
+            obj.updateRunButtonForParameters();
             obj.setStatus(sprintf(pd_ui_text('Switched to %s with %d editable calculation parameters.'), ...
                 analysisDescription(task), numel(obj.OptionCatalog)));
         end
@@ -575,7 +688,7 @@ classdef PostDataApp < handle
             if ~isfinite(selectionValue)
                 error('postdata:BadSelectionValue', 'Selection value must be numeric.');
             end
-            task = popupValue(obj.TaskPopup);
+            task = obj.currentAnalysisType();
             if ~strcmp(task, obj.ActiveAnalysisType)
                 obj.taskChanged([], []);
             end
@@ -614,9 +727,25 @@ classdef PostDataApp < handle
         end
 
         function finishExecutionState(obj)
-            if ishghandle(obj.RunButton), set(obj.RunButton, 'Enable', 'on'); end
+            obj.updateRunButtonForParameters();
             if ishghandle(obj.CancelButton), set(obj.CancelButton, 'Enable', 'off'); end
             obj.CancelRequested = false;
+        end
+
+        function updateRunButtonForParameters(obj)
+            state = 'off';
+            try
+                if ~isempty(obj.OptionCatalog) && ishghandle(obj.ComputeTable)
+                    pd_validate_catalog_values(obj.OptionCatalog, ...
+                        get(obj.ComputeTable, 'Data'));
+                    state = 'on';
+                end
+            catch
+                state = 'off';
+            end
+            if ishghandle(obj.RunButton)
+                set(obj.RunButton, 'Enable', state);
+            end
         end
 
         function validateEditableTables(obj, source, event)
@@ -633,17 +762,27 @@ classdef PostDataApp < handle
                         return;
                     end
                 end
-                task = popupValue(obj.TaskPopup);
+                task = obj.currentAnalysisType();
                 request = pd_create_request(task);
                 pd_apply_analysis_options(request, obj.OptionCatalog, get(obj.ComputeTable, 'Data'));
                 pd_plot_options_from_table(obj.PlotCatalog, get(obj.PlotTable, 'Data'));
                 pd_output_options_from_table(obj.OutputCatalog, get(obj.OutputTable, 'Data'));
+                computeData = pd_normalize_catalog_table_data( ...
+                    obj.OptionCatalog, get(obj.ComputeTable, 'Data'));
+                plotData = pd_normalize_catalog_table_data( ...
+                    obj.PlotCatalog, get(obj.PlotTable, 'Data'));
+                outputData = pd_normalize_catalog_table_data( ...
+                    obj.OutputCatalog, get(obj.OutputTable, 'Data'));
+                set(obj.ComputeTable, 'Data', computeData);
+                set(obj.PlotTable, 'Data', plotData);
+                set(obj.OutputTable, 'Data', outputData);
                 if ishghandle(obj.RunButton), set(obj.RunButton, 'Enable', 'on'); end
                 obj.setStatus('Parameter syntax is valid.');
                 obj.updateDependencyDisplay();
             catch err
                 if ishghandle(obj.RunButton), set(obj.RunButton, 'Enable', 'off'); end
-                obj.setStatus(['Invalid parameter: ', err.message]);
+                obj.setStatus([pd_ui_text('Invalid parameter:'), ' ', ...
+                    localizeValidationMessage(err.message)]);
             end
         end
 
@@ -672,9 +811,9 @@ classdef PostDataApp < handle
             data = get(obj.ComputeTable, 'Data');
             enabled = pd_catalog_enabled_mask(obj.OptionCatalog, data);
             set(obj.ParameterNameText, 'String', sprintf('%s (%s)', meta.Name, meta.Type));
-            help = meta.Description;
+            help = pd_ui_text(meta.Description);
             if ~enabled(row)
-                help = sprintf('%s | Inactive until %s = %s', help, ...
+                help = sprintf(pd_ui_text('%s | Inactive until %s = %s'), help, ...
                     meta.DependsOn, pd_format_option_value(meta.DependsValue));
             end
             set(obj.ParameterHelpText, 'String', help);
@@ -712,9 +851,10 @@ classdef PostDataApp < handle
             data = get(obj.ComputeTable, 'Data');
             previous = data{row, 2};
             data{row, 2} = textValue;
-            set(obj.ComputeTable, 'Data', data);
             try
                 pd_validate_catalog_values(obj.OptionCatalog, data);
+                data = pd_normalize_catalog_table_data(obj.OptionCatalog, data);
+                set(obj.ComputeTable, 'Data', data);
                 obj.updateDependencyDisplay();
                 obj.showSelectedParameter();
                 obj.validateEditableTables([], []);
@@ -868,9 +1008,9 @@ classdef PostDataApp < handle
             if size(data, 1) ~= numel(obj.OptionCatalog), return; end
             enabled = pd_catalog_enabled_mask(obj.OptionCatalog, data);
             for i = 1:numel(obj.OptionCatalog)
-                description = obj.OptionCatalog(i).Description;
+                description = pd_ui_text(obj.OptionCatalog(i).Description);
                 if ~enabled(i)
-                    description = sprintf('[inactive: %s=%s] %s', ...
+                    description = sprintf(pd_ui_text('[inactive: %s=%s] %s'), ...
                         obj.OptionCatalog(i).DependsOn, ...
                         pd_format_option_value(obj.OptionCatalog(i).DependsValue), description);
                 end
@@ -908,12 +1048,187 @@ classdef PostDataApp < handle
             end
         end
 
+        function plotViewChanged(obj, ~, ~)
+            obj.replotCurrentResult([], []);
+            if isempty(obj.CurrentResult) || isempty(obj.PlotDataViewIds)
+                return;
+            end
+            plotIndex = get(obj.PlotViewPopup, 'Value');
+            viewId = obj.PlotViewIds{plotIndex};
+            if strcmp(viewId, 'all')
+                return;
+            end
+            dataIndex = find(strcmp(viewId, obj.PlotDataViewIds), 1, 'first');
+            if ~isempty(dataIndex)
+                set(obj.PlotDataViewPopup, 'Value', dataIndex);
+                obj.updatePlotDataTable();
+            end
+        end
+
         function updatePlotViewChoices(obj)
             views = pd_result_plot_views(obj.CurrentResult);
             labels = [{pd_ui_text('All views')}, {views.Label}];
             obj.PlotViewIds = [{'all'}, {views.Id}];
             set(obj.PlotViewPopup, 'String', labels, 'Value', 1);
-            set(obj.PlotViewCountText, 'String', sprintf(pd_ui_text('Total: %d views'), numel(views)));
+            label = analysisDescription(obj.CurrentResult.analysisType);
+            set(obj.PlotViewCountText, 'String', sprintf( ...
+                pd_ui_text('%s / Total: %d views'), label, numel(views)));
+            obj.PlotDataViewIds = {views.Id};
+            set(obj.PlotDataViewPopup, 'String', {views.Label}, 'Value', 1);
+            obj.PlotDataPage = 1;
+            obj.PlotDataSelectedRows = [];
+            obj.updatePlotDataTable();
+        end
+
+        function showPlotDataTab(obj, ~, ~)
+            if isempty(obj.CurrentResult)
+                obj.showError(pd_ui_text('Run an analysis before viewing plot data.'));
+                return;
+            end
+            plotIndex = get(obj.PlotViewPopup, 'Value');
+            viewId = obj.PlotViewIds{plotIndex};
+            if ~strcmp(viewId, 'all')
+                dataIndex = find(strcmp(viewId, obj.PlotDataViewIds), 1, 'first');
+                if ~isempty(dataIndex)
+                    set(obj.PlotDataViewPopup, 'Value', dataIndex);
+                end
+            end
+            obj.updatePlotDataTable();
+            set(obj.TabGroup, 'SelectedTab', obj.PlotDataTab);
+        end
+
+        function plotDataViewChanged(obj, ~, ~)
+            obj.PlotDataPage = 1;
+            obj.PlotDataSelectedRows = [];
+            obj.updatePlotDataTable();
+        end
+
+        function updatePlotDataTable(obj)
+            if isempty(obj.CurrentResult) || isempty(obj.PlotDataViewIds)
+                obj.CurrentPlotData = [];
+                set(obj.PlotDataTable, 'Data', cell(0, 0), 'ColumnName', {});
+                set(obj.PlotDataInfoText, 'String', ...
+                    pd_ui_text('Run an analysis to inspect plot data.'));
+                set(obj.PlotDataPageText, 'String', pd_ui_text('Page 0 of 0'));
+                set([obj.PlotDataPreviousButton,obj.PlotDataNextButton], ...
+                    'Enable', 'off');
+                return;
+            end
+            index = get(obj.PlotDataViewPopup, 'Value');
+            index = max(1, min(index, numel(obj.PlotDataViewIds)));
+            viewId = obj.PlotDataViewIds{index};
+            obj.CurrentPlotData = pd_result_plot_data(obj.CurrentResult, viewId);
+            rowCount = obj.CurrentPlotData.RowCount;
+            columnCount = obj.CurrentPlotData.ColumnCount;
+            pageCount = max(1, ceil(rowCount / obj.PlotDataPageSize));
+            obj.PlotDataPage = max(1, min(obj.PlotDataPage, pageCount));
+            firstRow = (obj.PlotDataPage - 1) * obj.PlotDataPageSize + 1;
+            lastRow = min(rowCount, firstRow + obj.PlotDataPageSize - 1);
+            if rowCount == 0
+                pageValues = zeros(0, columnCount);
+                firstRow = 0;
+                lastRow = 0;
+            else
+                pageValues = obj.CurrentPlotData.Values(firstRow:lastRow, :);
+            end
+            editable = false(1, max(1, columnCount));
+            if columnCount == 0
+                editable = false;
+            end
+            set(obj.PlotDataTable, 'Data', pageValues, ...
+                'ColumnName', obj.CurrentPlotData.ColumnNames, ...
+                'ColumnEditable', editable);
+            set(obj.PlotDataInfoText, 'String', sprintf( ...
+                pd_ui_text('%s: %d rows x %d columns; showing rows %d-%d.'), ...
+                obj.CurrentPlotData.Label, rowCount, columnCount, firstRow, lastRow));
+            set(obj.PlotDataPageText, 'String', sprintf( ...
+                pd_ui_text('Page %d of %d'), obj.PlotDataPage, pageCount));
+            if obj.PlotDataPage > 1
+                previousState = 'on';
+            else
+                previousState = 'off';
+            end
+            if obj.PlotDataPage < pageCount
+                nextState = 'on';
+            else
+                nextState = 'off';
+            end
+            set(obj.PlotDataPreviousButton, 'Enable', previousState);
+            set(obj.PlotDataNextButton, 'Enable', nextState);
+            obj.PlotDataSelectedRows = [];
+        end
+
+        function changePlotDataPage(obj, delta)
+            if isempty(obj.CurrentPlotData)
+                return;
+            end
+            pageCount = max(1, ceil(obj.CurrentPlotData.RowCount / obj.PlotDataPageSize));
+            obj.PlotDataPage = max(1, min(pageCount, obj.PlotDataPage + delta));
+            obj.updatePlotDataTable();
+        end
+
+        function selectPlotDataRows(obj, ~, event)
+            if isempty(event) || isempty(event.Indices) || isempty(obj.CurrentPlotData)
+                obj.PlotDataSelectedRows = [];
+                return;
+            end
+            pageRows = unique(event.Indices(:, 1));
+            offset = (obj.PlotDataPage - 1) * obj.PlotDataPageSize;
+            obj.PlotDataSelectedRows = offset + pageRows(:).';
+        end
+
+        function copyPlotData(obj, selectedOnly)
+            if isempty(obj.CurrentPlotData)
+                obj.showError(pd_ui_text('Run an analysis before copying plot data.'));
+                return;
+            end
+            if selectedOnly
+                rows = obj.PlotDataSelectedRows;
+                if isempty(rows)
+                    obj.showError(pd_ui_text('Select one or more data rows first.'));
+                    return;
+                end
+            else
+                rows = 1:obj.CurrentPlotData.RowCount;
+            end
+            try
+                includeHeader = logical(get( ...
+                    obj.PlotDataCopyHeadersCheckbox, 'Value'));
+                text = pd_plot_data_text(obj.CurrentPlotData, char(9), ...
+                    rows, includeHeader);
+                clipboard('copy', text);
+                obj.setStatus(sprintf(pd_ui_text('Copied %d plot-data rows to the clipboard.'), ...
+                    numel(rows)), 'success');
+            catch err
+                obj.showError(err);
+            end
+        end
+
+        function exportCurrentPlotData(obj, ~, ~)
+            if isempty(obj.CurrentPlotData)
+                obj.showError(pd_ui_text('Run an analysis before exporting plot data.'));
+                return;
+            end
+            stepText = 'result';
+            if isfield(obj.CurrentResult, 'timestep') && ...
+                    isscalar(obj.CurrentResult.timestep)
+                stepText = sprintf('t%g', obj.CurrentResult.timestep);
+            end
+            defaultName = sprintf('plotdata_%s_%s_%s.csv', ...
+                obj.CurrentResult.analysisType, obj.CurrentPlotData.ViewId, stepText);
+            defaultName = regexprep(defaultName, '[^A-Za-z0-9_.-]', '_');
+            [name, folder] = uiputfile('*.csv', ...
+                pd_ui_text('Export plotted data as CSV'), defaultName);
+            if isequal(name, 0)
+                return;
+            end
+            try
+                filePath = fullfile(folder, name);
+                pd_write_plot_data_csv(filePath, obj.CurrentPlotData);
+                obj.setStatus([pd_ui_text('Plot data exported:'), filePath], 'success');
+            catch err
+                obj.showError(err);
+            end
         end
 
         function preparePlotAxes(obj, viewIds, updateMode)
@@ -1058,7 +1373,7 @@ classdef PostDataApp < handle
             config = struct();
             config.schemaVersion = 2;
             config.filePath = get(obj.FileEdit, 'String');
-            config.task = popupValue(obj.TaskPopup);
+            config.task = obj.currentAnalysisType();
             config.selectionMode = popupValue(obj.SelectionPopup);
             config.selectionValue = get(obj.SelectionEdit, 'String');
             config.slurmPath = get(obj.SlurmEdit, 'String');
@@ -1067,6 +1382,8 @@ classdef PostDataApp < handle
             config.computeData = get(obj.ComputeTable, 'Data');
             config.plotData = get(obj.PlotTable, 'Data');
             config.outputData = get(obj.OutputTable, 'Data');
+            config.copyPlotDataHeaders = logical(get( ...
+                obj.PlotDataCopyHeadersCheckbox, 'Value'));
         end
 
         function loadConfiguration(obj, ~, ~)
@@ -1089,7 +1406,7 @@ classdef PostDataApp < handle
 
         function applyConfiguration(obj, config)
             set(obj.FileEdit, 'String', config.filePath);
-            setPopupValue(obj.TaskPopup, config.task);
+            obj.setAnalysisType(config.task);
             obj.taskChanged([], []);
             setPopupValue(obj.SelectionPopup, config.selectionMode);
             set(obj.SelectionEdit, 'String', config.selectionValue);
@@ -1097,16 +1414,25 @@ classdef PostDataApp < handle
             setPopupValue(obj.ProgressPopup, config.progressMode);
             setPopupValue(obj.ResultLevelPopup, config.resultLevel);
             if size(config.computeData, 1) == numel(obj.OptionCatalog)
-                set(obj.ComputeTable, 'Data', config.computeData);
+                computeData = pd_normalize_catalog_table_data( ...
+                    obj.OptionCatalog, config.computeData);
+                set(obj.ComputeTable, 'Data', computeData);
                 obj.updateDependencyDisplay();
             end
             if size(config.plotData, 1) == numel(obj.PlotCatalog)
-                set(obj.PlotTable, 'Data', config.plotData);
+                plotData = pd_normalize_catalog_table_data( ...
+                    obj.PlotCatalog, config.plotData);
+                set(obj.PlotTable, 'Data', plotData);
             end
             if size(config.outputData, 1) == numel(obj.OutputCatalog)
-                set(obj.OutputTable, 'Data', config.outputData);
+                outputData = pd_normalize_catalog_table_data( ...
+                    obj.OutputCatalog, config.outputData);
+                set(obj.OutputTable, 'Data', outputData);
             end
+            set(obj.PlotDataCopyHeadersCheckbox, 'Value', ...
+                double(logical(config.copyPlotDataHeaders)));
             obj.selectionModeChanged([], []);
+            obj.updateRunButtonForParameters();
         end
 
         function setStatus(obj, message, state)
@@ -1129,7 +1455,7 @@ classdef PostDataApp < handle
 
         function showError(obj, errorValue)
             if isa(errorValue, 'MException')
-                message = errorValue.message;
+                message = localizeValidationMessage(errorValue.message);
                 identifier = errorValue.identifier;
                 diagnostic = getReport(errorValue, 'extended', ...
                     'hyperlinks', 'off');
@@ -1219,10 +1545,26 @@ function text = analysisDescription(task)
         case 'vx'
             text = pd_ui_text('mass-v analysis');
         case 'massx'
-            text = pd_ui_text('mass-x analysis');
+            text = pd_ui_text('SPH mass-x (m-x) analysis');
         otherwise
             text = pd_to_char(task);
     end
+end
+
+function text = computeHeaderText(task, count)
+    if strcmp(task, 'massx')
+        text = sprintf(pd_ui_text(['SPH mass-x (m-x): InitialDensity and ', ...
+            'ParticleSpacing are required; bin1d also requires ', ...
+            'TransverseWidth. (%d parameters)']), count);
+    else
+        text = sprintf(pd_ui_text('%s: %d editable calculation parameters'), ...
+            analysisDescription(task), count);
+    end
+end
+
+function message = localizeValidationMessage(message)
+    message = strrep(pd_to_char(message), 'A value is required.', ...
+        pd_ui_text('A value is required.'));
 end
 
 function position = defaultWindowPosition()

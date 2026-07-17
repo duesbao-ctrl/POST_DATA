@@ -3,6 +3,7 @@ POST_DATA2 MATLAB post-processing software	POST_DATA2 MATLAB 后处理软件
 Select data and analysis; validate parameters; run; review or export results	①选择数据和分析类型  ②检查参数  ③运行  ④查看或导出结果
 Data and run	数据与运行
 Result plots	结果图
+Plot data	绘图数据
 Calculation parameters	计算参数
 Plot settings	绘图条件
 Output settings	输出条件
@@ -33,6 +34,17 @@ Open one scalable, savable MATLAB figure for each result by default	默认每种
 Open all figures	打开全部图窗
 Close separate figures	关闭独立图窗
 Apply plot settings and refresh	应用绘图条件并刷新
+View plotted data	查看绘图数据
+Data view	数据视图
+Previous page	上一页
+Page 0 of 0	第 0/0 页
+Next page	下一页
+Include column headers when copying	复制时包含表头
+Clear this option to copy numeric rows without column names.	取消勾选后只复制数值行，不复制列名。
+Run an analysis to inspect plot data.	运行分析后可查看每幅图的实际数据。
+Copy selected rows	复制所选行
+Copy all data	复制全部数据
+Export this view as CSV	导出当前视图 CSV
 Parameter editor (select a table row to edit it here)	参数编辑器（选中表格行后在此修改）
 Select a calculation parameter first	请先选择一个计算参数
 Enabled	启用
@@ -55,6 +67,8 @@ Result field	结果字段
 2D field (61 x 41 grid x 3 timesteps)	二维场（61 × 41 网格 × 3 时刻）
 Particle/cluster (1200 items x 3 timesteps)	颗粒度/团簇（1200 个 × 3 时刻）
 mass-x cumulative distribution	mass-x 累积分布
+mass-x 2D sliced distribution	mass-x 二维分片分布
+SPH particle count by X bin	SPH 每个 X 区间的粒子数
 2D pore network	二维孔隙网络
 mass-v cumulative distribution	mass-v 累积分布
 Tools	工具
@@ -108,10 +122,22 @@ Analysis cancelled by user.	分析已由用户取消。
 Select an existing data file.	请选择一个存在的数据文件。
 Plot settings applied immediately without recalculation.	绘图条件已立即应用，无需重新计算。
 Total: %d views	共 %d 幅
+%s / Total: %d views	%s / 共 %d 幅
+Run an analysis before viewing plot data.	请先运行分析，再查看绘图数据。
+%s: %d rows x %d columns; showing rows %d-%d.	%s：共 %d 行 × %d 列；当前显示第 %d-%d 行。
+Page %d of %d	第 %d/%d 页
+Run an analysis before copying plot data.	请先运行分析，再复制绘图数据。
+Select one or more data rows first.	请先选择一行或多行数据。
+Copied %d plot-data rows to the clipboard.	已复制 %d 行绘图数据到剪贴板。
+Run an analysis before exporting plot data.	请先运行分析，再导出绘图数据。
+Export plotted data as CSV	将绘图数据导出为 CSV
+Plot data exported:	绘图数据已导出：
 Closed %d separate result figures.	已关闭 %d 个独立结果图窗。
 Error identifier:	错误标识：
 Detailed log:	详细日志：
 Error:	错误：
+Invalid parameter:	参数无效：
+A value is required.	必须填写该参数。
 Description	说明
 Parameter	参数
 1D/2D field analysis	一维/二维场分析
@@ -119,6 +145,28 @@ Parameter	参数
 Particle/cluster analysis	颗粒度/团簇分析
 mass-v analysis	mass-v 分析
 mass-x analysis	mass-x 分析
+SPH mass-x (m-x) analysis	SPH mass-x（m-x）分析
+%s: %d editable calculation parameters	%s：%d 个可编辑计算参数
+SPH mass-x (m-x): InitialDensity and ParticleSpacing are required; bin1d also requires TransverseWidth. (%d parameters)	SPH mass-x（m-x）：必须填写初始密度和初始粒子间距；bin1d 还必须填写横向宽度。（共 %d 个参数）
+%s | Inactive until %s = %s	%s｜仅当 %s = %s 时启用
+[inactive: %s=%s] %s	[未启用：%s=%s] %s
+SPH chunk dimension: auto, 1d, or 2d	SPH chunk 维度：auto、1d 或 2d
+Coordinate column; auto tries Coord1, c_x, then Chunk	X 坐标列；auto 依次尝试 Coord1、c_x、Chunk
+Y column for bin2d; auto tries Coord2 then c_y	bin2d 的 Y 坐标列；auto 依次尝试 Coord2、c_y
+SPH particle-count column	SPH 粒子计数列
+Physical SPH dimension: 2 or 3	SPH 物理维度：2 或 3
+Initial SPH material density in g/cm^3	SPH 材料初始密度，单位 g/cm^3
+Initial SPH particle spacing d0 in raw coordinate units	SPH 初始粒子间距 d0，单位为原始坐标单位
+Physical micrometers represented by one raw coordinate unit	一个原始坐标单位代表的物理长度，单位 μm
+Full y width in raw units; required for bin1d	完整 Y 向宽度，单位为原始坐标单位；bin1d 必填
+Full z width in raw units; required for 3D SPH	完整 Z 向宽度，单位为原始坐标单位；三维 SPH 必填
+Optional bin2d y-slice centers in raw units	bin2d 可选 Y 分片中心，单位为原始坐标单位
+Scalar or per-slice bin2d y widths in raw units	bin2d 的统一或逐分片 Y 宽度，单位为原始坐标单位
+Display coordinate multiplier; normally 10 for um	显示坐标乘数；坐标换算为 μm 时通常取 10
+Coordinate range after conversion [min max]	换算后的坐标范围 [最小值 最大值]
+Coordinate axis label	坐标轴名称
+Coordinate unit shown on plots	绘图中显示的坐标单位
+Fixed high-to-low so cumulative mass-x decreases with x	固定从大坐标向小坐标累积，使 mass-x 随 x 单调递减
 Field distribution	场分布
 Value histogram	数值直方图
 Mean profile in X direction	X 方向均值剖面

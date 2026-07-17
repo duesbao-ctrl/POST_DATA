@@ -19,6 +19,13 @@ postdata_startup
 
 request = pd_create_request('massx');
 request.filePath = fullfile(pwd, 'fixtures', 'sample', 'bin1d_dx_0.5.txt');
+request.analysisOptions = {'ChunkDim', '1d', ...
+    'SphDimension', 2, ...
+    'InitialDensity', 7.3, ...       % g/cm^3
+    'ParticleSpacing', 0.1, ...      % raw SPH coordinate units
+    'RawLengthUnitUm', 10, ...       % 1 raw unit = 10 um
+    'TransverseWidth', 1, ...        % full y width, raw units
+    'CoordinateFactor', 10};         % plot x in um
 request.makePlots = false;
 result = postdata_run(request);
 ```
@@ -28,22 +35,84 @@ result = postdata_run(request);
 - `chunk`：一维或二维原始场/派生场。`ChunkDim=auto` 会根据 `Coord2/c_y` 是否存在自动识别维度，避免一维文件误报缺少 `Coord2`。
 - `cluster`：团簇尺寸、概率分布、CDF、拟合和位置分箱统计。
 - `vx`：mass-v 面密度分布，默认从最大速度向最小速度累积。
-- `massx`：mass-x 空间分布，固定从最大坐标向最小坐标累积；累计曲线按横坐标从小到大显示时保证单调递减，纵轴单位为 `mg/cm^2`。负面密度默认裁剪为零，也可设为报错。
+- `massx`：仅用于平面二维 SPH 结果，根据 chunk 中的 `Ncount`、初始密度、初始粒子间距和 y 统计宽度计算 mass-x；固定从最大 x 向最小 x 累积，纵轴单位为 `mg/cm^2`。
 - `network2d`：二维孔隙/基体几何、拓扑、连通性、方向剖面和演化统计。
 
-`massx` 可设置坐标列、坐标换算系数、坐标范围、坐标名称/单位、累积方向和要统计的 `ArealDensity` 列。若密度列留空，程序自动发现所有以 `ArealDensity` 结尾的列；存在 `mass1ArealDensity` 与 `mass2ArealDensity` 时，`massArealDensity` 会按二者之和重建。
+### SPH mass-x 物理模型
+
+SPH 的 `bin1d` / `bin2d` 文件不需要、也不应包含面密度列。程序读取每个
+chunk 的 `Ncount`。`ChunkDim` 表示 chunk 分箱维度，`SphDimension` 表示
+模拟本身是二维还是三维，两者不能混为一谈。对于平面二维 SPH，单粒子代表的
+单位厚度质量为
+
+```text
+particleLineMass = rho0 * (d0 * Lunit)^2              [g/cm]
+localArealDensity = Ncount * particleLineMass
+                    / (Wy * Lunit) * 1000             [mg/cm^2]
+```
+
+其中 `rho0=InitialDensity`，单位为 `g/cm^3`；`d0=ParticleSpacing` 和
+`Wy` 都使用原始模拟坐标单位；`Lunit=RawLengthUnitUm*1e-4 cm`。本 SPH
+单位制通常为一个原始坐标单位等于 `10 um`，所以 `RawLengthUnitUm=10`，
+同时绘图坐标设置 `CoordinateFactor=10` 后直接显示为 `um`。显示缩放与物理
+单位参数分别保存，不能混用。
+
+- `bin1d` 不含 y 范围，必须显式设置 `TransverseWidth`。
+- `bin2d` 默认对完整 y 宽度统计；设置 `SliceCentersY` 和
+  `SliceWidthsY` 可同时得到多个 y 位置/宽度的 mass-x 曲线。
+- `SphDimension=3` 时单粒子质量改为 `rho0*d0^3`，并必须用
+  `OutOfPlaneWidth` 指定 z 方向统计宽度；最终除以 `Wy*Wz`。
+- 任意分片边界穿过 y 网格时，程序按网格与分片的几何重叠比例分配该格子的
+  `Ncount`，并用实际覆盖宽度归一化。
+- 局部面密度表示每个 x chunk 的质量贡献，累计值直接沿 x 求和，不再除以
+  x chunk 宽度。
+- 该模型假定所选粒子具有相同的初始质量。多材料或自适应变质量结果若只有
+  总 `Ncount`，无法从 chunk 文件恢复各材料的精确质量，需分别输出各材料计数。
+
+SPH 文件中已经输出的 `c_rho`、`c_temp`、`c_damagedPress` 等原始场直接读取，
+不使用 `dV`。`dV` 参数只属于 MD 守恒量的派生分析路径；压力、密度和应力等
+按公式需要正的 `dV`，速度/温度等则由对应 MD 守恒量公式计算。无论哪种情况，
+SPH 原始场和 SPH mass-x 都不会进入 MD 的 `dV` 路径。
+
+## Current SPID chunk compatibility
+
+The reader accepts both legacy LAMMPS-style chunk files and the current SPID
+format. Current SPID headers may contain:
+
+```text
+# Chunk-averaged data for SPID
+# Units microscale
+# Name bin1d Kind spatial
+# Timestep Number-of-chunks Total-count
+# Chunk Coord1 Ncount rho
+# Time 0.1
+```
+
+- Header length is not fixed; `Units`, `Name`, and `Kind` metadata are kept.
+- Embedded `# Time` values support `SelectBy=Time` without a Slurm file.
+- `spatial` output supports automatic 1D, 2D, and 3D coordinate detection.
+- `field` mass-v output automatically uses `Coord1`; legacy files keep
+  `Chunk` as the preferred automatic coordinate.
+- `cluster` output accepts both SPID `x/y/z` and legacy `c_x/c_y/c_z` names.
+- When `UseFileUnitMetadata=true`, known SPID unit systems are converted to
+  the displayed mass-v and mass-x units. Metadata-free files keep the existing
+  manual factors.
 
 ## 图形界面
 
 - “Calculation parameters”随分析类型动态切换，并为枚举值提供下拉框、逻辑值提供复选框。
 - “Visualization”默认显示“全部视图”仪表板，也可从下拉框切换到某个单独视图。
+- “绘图数据”页可按视图查看图中实际使用的 X/Y/Z 或分布数据；大表按每页 500
+  行显示，可复制所选行、复制完整数据或将当前视图直接导出为 CSV。
 - 默认勾选 `Separate figures after run`：每个可用视图还会打开为独立 MATLAB 图窗；取消勾选可只保留嵌入式仪表板，也可随时点击 `Open all figures`。
-- 主界面提供中文工作流提示和“示例数据”菜单，可一键载入一维、二维、颗粒度、mass-x、mass-v 或孔隙网络案例，并自动设置匹配的分析类型与关键参数。
+- 主界面提供中文工作流提示和“示例数据”菜单，可一键载入一维、二维、颗粒度、SPH mass-x 一维/二维分片、mass-v 或孔隙网络案例，并自动设置匹配的分析类型与关键参数。
 - 快捷键：`F5` 运行、`Esc` 请求取消、`Ctrl+O` 浏览数据、`Ctrl+E` 加载当前分析类型的示例。
 - 不同分析拥有各自视图，例如场图、直方图、X/Y 均值剖面、微分/累积分布、组分标签、孔径分布和孔隙率方向剖面。
 - `UpdateMode=replace` 会覆盖已有图层；`UpdateMode=overlay` 会在对应视图中叠加不同算例或时刻。
 - “Plot conditions”可修改坐标范围、色限、配色、线宽、点大小、网格、色条、等比例轴和对数轴。
-- “Output conditions”支持 MAT、摘要 CSV、明细 CSV、PNG、FIG、PDF、运行清单和自动导出。
+- “Output conditions”支持 MAT、摘要 CSV、分析明细 CSV、逐视图绘图数据 CSV、
+  PNG、FIG、PDF、运行清单和自动导出。设置 `SavePlotDataCSV=true` 会为每幅
+  可用结果图输出一份与绘图完全一致的数值表。
 - 配置文件会按参数名升级，新增选项不会导致旧配置错位。
 - “工具”菜单提供“检查当前输入与参数”“系统诊断”和“打开运行日志”，可在正式计算前发现文件列缺失、表头冲突和参数错误。
 
@@ -111,4 +180,14 @@ paths = generate_large_test_data();
 report = run_large_verification();
 ```
 
-结果图和数值摘要输出到 `verification/`。
+默认验证图和摘要写入 `outputs/verification/`，该目录是可随时
+重建的运行输出，不纳入源码和分发包。
+
+脚本中也可以直接取得某幅图的完整数据：
+
+```matlab
+viewData = pd_result_plot_data(result, 'cumulative');
+disp(viewData.ColumnNames)
+disp(viewData.Values)
+pd_write_plot_data_csv('mass_x_cumulative.csv', viewData);
+```

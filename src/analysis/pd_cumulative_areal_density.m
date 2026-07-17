@@ -1,4 +1,4 @@
-function distribution = pd_cumulative_areal_density(step, coordinate, densityVarsInput, direction, callerId, negativeMode)
+function distribution = pd_cumulative_areal_density(step, coordinate, densityVarsInput, direction, callerId, negativeMode, densityFactor)
 %PD_CUMULATIVE_AREAL_DENSITY Shared cumulative mass distribution engine.
 % Coordinates are sorted ascending. high-to-low sums values at coordinates
 % greater than or equal to the current coordinate; low-to-high does the reverse.
@@ -6,6 +6,12 @@ function distribution = pd_cumulative_areal_density(step, coordinate, densityVar
     if nargin < 4 || isempty(direction), direction = 'high-to-low'; end
     if nargin < 5 || isempty(callerId), callerId = 'postdata:cumulative'; end
     if nargin < 6 || isempty(negativeMode), negativeMode = 'clip'; end
+    if nargin < 7 || isempty(densityFactor), densityFactor = 1; end
+    if ~(isnumeric(densityFactor) && isscalar(densityFactor) && ...
+            isfinite(densityFactor) && densityFactor > 0)
+        error([callerId, ':BadDensityFactor'], ...
+            'DensityFactor must be a positive finite scalar.');
+    end
     direction = lower(strtrim(pd_to_char(direction)));
     if ~any(strcmp(direction, {'high-to-low','low-to-high'}))
         error([callerId, ':BadDirection'], ...
@@ -46,7 +52,7 @@ function distribution = pd_cumulative_areal_density(step, coordinate, densityVar
         keep(k) = true;
     end
     densityVars = densityVarsRequested(keep);
-    density = density(:, keep);
+    density = density(:, keep) .* densityFactor;
     if isempty(densityVars)
         error([callerId, ':NoAvailableDensityVar'], ...
             'No requested ArealDensity column is available.');
@@ -124,6 +130,7 @@ function distribution = pd_cumulative_areal_density(step, coordinate, densityVar
     distribution.negativeDensityMode = negativeMode;
     distribution.negativeValueCount = negativeValueCount;
     distribution.isMonotonicDecreasing = isMonotonicDecreasing;
+    distribution.densityFactor = densityFactor;
 end
 
 function densityVars = resolveDensityVars(step, densityVarsInput, callerId)
