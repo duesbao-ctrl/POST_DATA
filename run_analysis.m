@@ -1,219 +1,156 @@
-function out = run_analysis(taskType, varargin)
-%RUN_ANALYSIS Unified entry for three analysis categories.
-%   out = RUN_ANALYSIS('chunk', ...)
-%   out = RUN_ANALYSIS('cluster', ...)
-%   out = RUN_ANALYSIS('vx', ...)
-%   out = RUN_ANALYSIS('network2d', ...)
-%
-% Common selector params (for all 3 categories):
-%   SelectBy: 'Index' | 'TimeStep' | 'Time'
-%   Index, TimeStep, Time, SlurmPath, SlurmModuleIndex, ProgressMode
-%
-% taskType='chunk' required params:
-%   ChunkDim : '1d' or '2d'
-%   Variable : e.g. c_rho / T / velocity / pressure / density / Sxx ... / vonMisesS
-% Optional:
-%   ChunkFile (.txt), dV, PlotOptions, DoPlot, CoordScale, CoordRangeX, CoordRangeY
-%
-% taskType='cluster' optional params:
-%   ClusterFile (.txt), ClusterOptions
-%
-% taskType='vx' optional params:
-%   VxFile (.txt), VxOptions
-%
-% taskType='network2d' optional params:
-%   ChunkFile (.txt), NetworkOptions
+function result = run_analysis(taskType, varargin)
+%RUN_ANALYSIS Compatibility wrapper around the modular POST_DATA request API.
+%   New scripts should prefer pd_create_request + postdata_run. This wrapper
+%   preserves the established chunk/cluster/vx/network2d calling convention
+%   and adds mass-v and mass-x aliases without duplicating analysis logic.
 
+    postdata_startup();
     p = inputParser;
-    p.addRequired('taskType', @isTextScalar);
-
-    p.addParameter('BaseDir', pwd, @isTextScalar);
-
-    p.addParameter('SelectBy', 'Index', @isTextScalar);
+    p.addRequired('taskType', @pd_is_text_scalar);
+    p.addParameter('BaseDir', pwd, @pd_is_text_scalar);
+    p.addParameter('SelectBy', 'Index', @pd_is_text_scalar);
     p.addParameter('Index', 1, @isnumeric);
     p.addParameter('TimeStep', [], @isnumeric);
     p.addParameter('Time', [], @isnumeric);
-    p.addParameter('SlurmPath', '', @isTextScalar);
+    p.addParameter('SlurmPath', '', @pd_is_text_scalar);
     p.addParameter('SlurmModuleIndex', 1, @isnumeric);
-    p.addParameter('ProgressMode', 'auto', @isTextScalar);
+    p.addParameter('ProgressMode', 'auto', @pd_is_text_scalar);
+    p.addParameter('ResultLevel', 'full', @pd_is_text_scalar);
+    p.addParameter('LogFile', '', @pd_is_text_scalar);
+    p.addParameter('PublicationPlotOptions', struct(), @isPlotOptions);
 
-    p.addParameter('ChunkDim', '2d', @isTextScalar);
-    p.addParameter('ChunkFile', '', @isTextScalar);
-    p.addParameter('Variable', 'c_rho', @isTextScalar);
+    p.addParameter('ChunkDim', 'auto', @pd_is_text_scalar);
+    p.addParameter('ChunkFile', '', @pd_is_text_scalar);
+    p.addParameter('Variable', 'c_rho', @pd_is_text_scalar);
     p.addParameter('dV', [], @isnumeric);
     p.addParameter('DoPlot', true, @islogical);
     p.addParameter('PlotOptions', {}, @iscell);
     p.addParameter('CoordScale', 1, @isnumeric);
     p.addParameter('CoordRangeX', [], @isnumeric);
     p.addParameter('CoordRangeY', [], @isnumeric);
+    p.addParameter('GradientVariable', '', @pd_is_text_scalar);
+    p.addParameter('GradientSmoothLevel', 0, @isnumeric);
+    p.addParameter('StrainRateVelocityComponent', 'vz', @pd_is_text_scalar);
+    p.addParameter('StrainRateDensityVariable', 'c_rho', @pd_is_text_scalar);
 
-    p.addParameter('ClusterFile', '', @isTextScalar);
+    p.addParameter('ClusterFile', '', @pd_is_text_scalar);
     p.addParameter('ClusterOptions', {}, @iscell);
-
-    p.addParameter('VxFile', '', @isTextScalar);
+    p.addParameter('VxFile', '', @pd_is_text_scalar);
     p.addParameter('VxOptions', {}, @iscell);
-
+    p.addParameter('MassXFile', '', @pd_is_text_scalar);
+    p.addParameter('MassXOptions', {}, @iscell);
     p.addParameter('NetworkOptions', {}, @iscell);
-
     p.parse(taskType, varargin{:});
     opt = p.Results;
-    taskType = toChar(taskType);
-    opt.BaseDir = toChar(opt.BaseDir);
-    opt.SelectBy = toChar(opt.SelectBy);
-    opt.SlurmPath = toChar(opt.SlurmPath);
-    opt.ProgressMode = toChar(opt.ProgressMode);
-    opt.ChunkDim = toChar(opt.ChunkDim);
-    opt.ChunkFile = toChar(opt.ChunkFile);
-    opt.Variable = toChar(opt.Variable);
-    opt.ClusterFile = toChar(opt.ClusterFile);
-    opt.VxFile = toChar(opt.VxFile);
 
-    t = lower(strtrim(taskType));
-
-    % Auto slurm path for Time mode when missing.
-    if strcmpi(opt.SelectBy, 'Time') && isempty(opt.SlurmPath)
-        opt.SlurmPath = get_slurm_txt_fullpath(opt.BaseDir);
-    end
-
-    selArgs = {'SelectBy', opt.SelectBy, ...
-               'Index', opt.Index, ...
-               'TimeStep', opt.TimeStep, ...
-               'Time', opt.Time, ...
-               'SlurmPath', opt.SlurmPath, ...
-               'SlurmModuleIndex', opt.SlurmModuleIndex, ...
-               'ProgressMode', opt.ProgressMode};
-
-    switch t
+    type = pd_normalize_analysis_type(taskType);
+    request = pd_create_request(type);
+    request.baseDir = pd_to_char(opt.BaseDir);
+    request.progressMode = pd_to_char(opt.ProgressMode);
+    request.resultLevel = pd_to_char(opt.ResultLevel);
+    request.plotOptions = opt.PublicationPlotOptions;
+    request.execution.logFile = pd_to_char(opt.LogFile);
+    request.selection.mode = pd_to_char(opt.SelectBy);
+    request.selection.value = selectionValue(opt);
+    request.selection.slurmPath = pd_to_char(opt.SlurmPath);
+    request.selection.slurmModuleIndex = opt.SlurmModuleIndex;
+    switch type
         case 'chunk'
-            chunkFile = resolveChunkFile(opt.BaseDir, opt.ChunkFile, opt.ChunkDim);
-            out = analyze_chunk_field(chunkFile, ...
-                'ChunkDim', opt.ChunkDim, ...
-                'Variable', opt.Variable, ...
-                selArgs{:}, ...
-                'dV', opt.dV, ...
-                'DoPlot', opt.DoPlot, ...
-                'PlotOptions', opt.PlotOptions, ...
-                'CoordScale', opt.CoordScale, ...
-                'CoordRangeX', opt.CoordRangeX, ...
-                'CoordRangeY', opt.CoordRangeY);
-
+            request.filePath = legacyFile(opt.ChunkFile, 'ChunkFile');
+            request.makePlots = opt.DoPlot;
+            request.chunk.dimension = pd_to_char(opt.ChunkDim);
+            request.chunk.variable = pd_to_char(opt.Variable);
+            request.chunk.dV = opt.dV;
+            request.chunk.coordScale = opt.CoordScale;
+            request.chunk.coordRangeX = opt.CoordRangeX;
+            request.chunk.coordRangeY = opt.CoordRangeY;
+            request.chunk.gradientVariable = pd_to_char(opt.GradientVariable);
+            request.chunk.gradientSmoothLevel = opt.GradientSmoothLevel;
+            request.chunk.strainRateVelocityComponent = ...
+                pd_to_char(opt.StrainRateVelocityComponent);
+            request.chunk.strainRateDensityVariable = ...
+                pd_to_char(opt.StrainRateDensityVariable);
+            request.chunk.plotOptions = opt.PlotOptions;
         case 'cluster'
-            clusterFile = resolveByPattern(opt.BaseDir, opt.ClusterFile, 'cluster_chunk*.txt', true, 'ClusterFile');
-            out = cluster_postprocess(clusterFile, selArgs{:}, opt.ClusterOptions{:});
-
+            request.filePath = legacyFile(opt.ClusterFile, 'ClusterFile');
+            [request.analysisOptions, request.makePlots] = ...
+                extractLogicalOption(opt.ClusterOptions, 'MakePlots', true);
         case 'vx'
-            vxFile = resolveByPattern(opt.BaseDir, opt.VxFile, 'vx_chunk*.txt', true, 'VxFile');
-            out = vx_chunk_cumulative(vxFile, selArgs{:}, opt.VxOptions{:});
-
+            request.filePath = legacyFile(opt.VxFile, 'VxFile');
+            [request.analysisOptions, request.makePlots] = ...
+                extractLogicalOption(opt.VxOptions, 'MakePlot', true);
+        case 'massx'
+            request.filePath = legacyFile(opt.MassXFile, 'MassXFile');
+            [request.analysisOptions, request.makePlots] = ...
+                extractLogicalOption(opt.MassXOptions, 'MakePlot', true);
         case 'network2d'
-            if ~strcmpi(opt.ChunkDim, '2d')
+            if strcmpi(pd_to_char(opt.ChunkDim), '1d')
                 error('run_analysis:BadNetworkChunkDim', ...
-                    'taskType=''network2d'' requires ChunkDim=''2d''.');
+                    'taskType=''network2d'' requires 2D input.');
             end
-            chunkFile = resolveChunkFile(opt.BaseDir, opt.ChunkFile, '2d');
-            out = analyze_chunk_network2d(chunkFile, selArgs{:}, ...
-                'CoordScale', opt.CoordScale, ...
-                opt.NetworkOptions{:});
+            request.filePath = legacyFile(opt.ChunkFile, 'ChunkFile');
+            request.chunk.coordScale = opt.CoordScale;
+            [request.analysisOptions, request.makePlots] = ...
+                extractLogicalOption(opt.NetworkOptions, 'MakePlots', true);
+    end
+    result = postdata_run(request);
+end
 
+function value = selectionValue(opt)
+    switch lower(strtrim(pd_to_char(opt.SelectBy)))
+        case 'index', value = opt.Index;
+        case 'timestep', value = opt.TimeStep;
+        case 'time', value = opt.Time;
         otherwise
-            error('run_analysis:BadTaskType', 'taskType must be chunk/cluster/vx/network2d.');
+            error('run_analysis:BadSelectBy', ...
+                'SelectBy must be Index, TimeStep, or Time.');
+    end
+    if ~(isnumeric(value) && isscalar(value) && isfinite(value))
+        error('run_analysis:MissingSelectionValue', ...
+            'The selected Index, TimeStep, or Time value must be a finite scalar.');
     end
 end
 
-function tf = isTextScalar(v)
-    tf = ischar(v) || (isstring(v) && isscalar(v));
-end
-
-function s = toChar(v)
-    if isstring(v)
-        s = char(v);
-    else
-        s = v;
-    end
-end
-
-function p = resolveChunkFile(baseDir, chunkFile, chunkDim)
-    if ~isempty(chunkFile)
-        p = resolvePreferredTextFile(baseDir, chunkFile, 'ChunkFile');
-        return;
-    end
-
-    dimTag = lower(strtrim(chunkDim));
-    if strcmp(dimTag, '1d')
-        p = resolveByPattern(baseDir, '', 'bin1d*.txt');
-    elseif strcmp(dimTag, '2d')
-        p = resolveByPattern(baseDir, '', 'bin2d*.txt');
-    else
-        error('run_analysis:BadChunkDim', 'ChunkDim must be ''1d'' or ''2d''.');
-    end
-end
-
-function p = resolveByPattern(baseDir, preferred, pattern, requireTxt, argName)
-    if nargin < 4
-        requireTxt = false;
-    end
-    if nargin < 5
-        argName = 'File';
-    end
-    if ~isempty(preferred)
-        p = resolvePreferredFile(baseDir, preferred, argName, requireTxt);
-        return;
-    end
-
-    files = dir(fullfile(baseDir, pattern));
-    files = files(~[files.isdir]);
-
-    if isempty(files)
-        error('run_analysis:NoMatch', 'No file matches %s in %s', pattern, baseDir);
-    end
-    if numel(files) > 1
-        names = {files.name};
-        error('run_analysis:MultipleMatches', ...
-            'Multiple files match %s in %s: %s', pattern, baseDir, strjoin(names, ', '));
-    end
-
-    p = fullfile(baseDir, files(1).name);
-end
-
-function p = resolvePreferredTextFile(baseDir, preferred, argName)
-    p = resolvePreferredFile(baseDir, preferred, argName, true);
-end
-
-function p = resolvePreferredFile(baseDir, preferred, argName, requireTxt)
-    if nargin < 4
-        requireTxt = false;
-    end
-
-    if requireTxt && ~hasTxtSuffix(preferred)
+function fileName = legacyFile(value, argumentName)
+    fileName = pd_to_char(value);
+    if isempty(fileName), return; end
+    if isempty(regexpi(fileName, '\.txt$', 'once'))
         error('run_analysis:MissingTxtSuffix', ...
             '%s must include the .txt suffix to avoid matching cache files: %s', ...
-            argName, preferred);
-    end
-
-    if isAbsolutePath(preferred)
-        p = preferred;
-    else
-        p = fullfile(baseDir, preferred);
-    end
-    if ~exist(p, 'file')
-        error('run_analysis:PreferredFileNotFound', 'File not found: %s', p);
+            argumentName, fileName);
     end
 end
 
-function tf = hasTxtSuffix(p)
-    tf = ~isempty(regexpi(p, '\.txt$', 'once'));
+function [remaining, value] = extractLogicalOption(options, name, defaultValue)
+    if mod(numel(options), 2) ~= 0
+        error('run_analysis:BadOptions', ...
+            'Legacy calculation options must be name-value pairs.');
+    end
+    value = defaultValue;
+    remaining = {};
+    found = false;
+    for i = 1:2:numel(options)
+        if ~pd_is_text_scalar(options{i})
+            error('run_analysis:BadOptionName', ...
+                'Legacy calculation option names must be text.');
+        end
+        if strcmpi(pd_to_char(options{i}), name)
+            if found
+                error('run_analysis:DuplicatePlotFlag', ...
+                    '%s is specified more than once.', name);
+            end
+            value = options{i + 1};
+            found = true;
+        else
+            remaining(end + 1:end + 2) = options(i:i + 1); %#ok<AGROW>
+        end
+    end
+    if ~(islogical(value) && isscalar(value))
+        error('run_analysis:BadPlotFlag', '%s must be a logical scalar.', name);
+    end
 end
 
-function tf = isAbsolutePath(p)
-    tf = false;
-    if isempty(p)
-        return;
-    end
-    if numel(p) >= 2 && p(2) == ':'
-        tf = true;
-        return;
-    end
-    if numel(p) >= 2 && strcmp(p(1:2), '\\')
-        tf = true;
-    end
+function tf = isPlotOptions(value)
+    tf = isempty(value) || (isstruct(value) && isscalar(value)) || ...
+        (iscell(value) && mod(numel(value), 2) == 0);
 end
