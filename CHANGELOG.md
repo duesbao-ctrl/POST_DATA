@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.1 - 2026-07-20
+
+- Unified preflight, indexed, and full chunk reads on strict line-oriented
+  parsers so malformed row widths and frame summaries cannot shift data across
+  lines; bumped sidecar index format to version 3.
+- Fixed 3D automatic `bin3d*.txt` discovery and preserved z coordinates in
+  analysis-detail CSV exports through the shared plot-data contract.
+- Fixed metadata-driven mass-v and mass-x conversion to honor the requested
+  display unit instead of only changing the axis label.
+- Allowed every API entry point to use embedded SPID physical time without a
+  Slurm file while retaining automatic Slurm fallback for legacy inputs.
+- Resolved relative Slurm paths against `baseDir` and made legacy/new cluster
+  coordinate aliases bidirectional and case-insensitive.
+- Expanded the MATLAB regression suite to 106 cases covering the corrected
+  unit, time, dimension, alias, export, and malformed-input paths.
+
 ## 0.6.0 - 2026-07-16
 
 - Added current SPID chunk parsing for extensible metadata headers and

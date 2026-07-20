@@ -64,6 +64,17 @@ function testLegacyRunAnalysisUsesModularCore(testCase)
     verifyEqual(testCase, result.dimension, '1d');
 end
 
+function testLegacyWrapperUsesEmbeddedSpidTimeWithoutSlurm(testCase)
+    result = run_analysis('chunk', ...
+        'BaseDir', testCase.TestData.FixtureDir, ...
+        'ChunkFile', 'spid_spatial3d.txt', ...
+        'ChunkDim', 'auto', 'Variable', 'rho', ...
+        'SelectBy', 'Time', 'Time', 0.19, ...
+        'DoPlot', false, 'ProgressMode', 'off');
+    verifyEqual(testCase, result.timestep, 200);
+    verifyEqual(testCase, result.physicalTime, 0.2, 'AbsTol', 1e-12);
+end
+
 function testGridConstruction(testCase)
     [grid, valid, xc, yc, count] = pd_network_build_grid( ...
         [0; 1; 0; 1], [0; 0; 1; 1], [1; 2; 3; 4]);
@@ -141,6 +152,138 @@ function testCurrentSpidSpatial3dAnalysis(testCase)
     verifyEqual(testCase, data.Kind, 'field3d');
     verifyEqual(testCase, data.ColumnNames, {'x','y','z','rho'});
     verifyEqual(testCase, size(data.Values), [8 4]);
+end
+
+function testCurrentSpidPhysicalTimeRequestNeedsNoSlurm(testCase)
+    request = makeRequest(testCase, 'chunk', 'spid_spatial3d.txt');
+    request.chunk.variable = 'rho';
+    request.selection.mode = 'Time';
+    request.selection.value = 0.19;
+    request.selection.slurmPath = '';
+    result = postdata_run(request);
+    verifyEqual(testCase, result.timestep, 200);
+    verifyEqual(testCase, result.physicalTime, 0.2, 'AbsTol', 1e-12);
+end
+
+function testLegacyPhysicalTimeRequestStillRequiresSlurm(testCase)
+    folder = tempname;
+    mkdir(folder);
+    cleanupObj = onCleanup(@() cleanupDirectory(folder)); %#ok<NASGU>
+    copyfile(fullfile(testCase.TestData.FixtureDir, ...
+        'bin1d_dx_0.5.txt'), folder);
+    request = pd_create_request('chunk');
+    request.baseDir = folder;
+    request.filePath = 'bin1d_dx_0.5.txt';
+    request.progressMode = 'off';
+    request.makePlots = false;
+    request.chunk.variable = 'c_rho';
+    request.selection.mode = 'Time';
+    request.selection.value = 0.1;
+    request.selection.slurmPath = '';
+    verifyError(testCase, @() postdata_run(request), ...
+        'read_chunk_step_fast:MissingSlurmPath');
+end
+
+function testRelativeSlurmPathResolvesAgainstBaseDirectory(testCase)
+    request = makeRequest(testCase, 'chunk', 'bin1d_dx_0.5.txt');
+    request.chunk.variable = 'c_rho';
+    request.selection.mode = 'Time';
+    request.selection.value = 15;
+    request.selection.slurmPath = 'slurm_case.log';
+    validated = pd_validate_request(request);
+    verifyEqual(testCase, validated.selection.slurmPath, ...
+        fullfile(testCase.TestData.FixtureDir, 'slurm_case.log'));
+    result = postdata_run(request);
+    verifyTrue(testCase, any(result.timestep == [100 200]));
+end
+
+function testMalformedSpidPhysicalTimeRejected(testCase)
+    folder = tempname;
+    mkdir(folder);
+    cleanupObj = onCleanup(@() cleanupDirectory(folder)); %#ok<NASGU>
+    filePath = fullfile(folder, 'bad_time.txt');
+    content = sprintf(['# Chunk-averaged data for SPID\n', ...
+        '# Units microscale\n', ...
+        '# Name bin1d Kind spatial\n', ...
+        '# Timestep Number-of-chunks Total-count\n', ...
+        '# Chunk Coord1 Ncount\n', ...
+        '# Time 1oops\n', ...
+        '100 1 1\n', ...
+        '1 0 1\n']);
+    writeTextFile(filePath, content);
+    verifyError(testCase, @() read_chunk_step_fast(filePath, ...
+        'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off'), ...
+        'read_chunk_step_fast:BadPhysicalTime');
+end
+
+function testChunkReadersRejectCrossLineColumnBleed(testCase)
+    folder = tempname;
+    mkdir(folder);
+    cleanupObj = onCleanup(@() cleanupDirectory(folder)); %#ok<NASGU>
+    filePath = fullfile(folder, 'bad_rows.txt');
+    content = sprintf(['# header 1\n', ...
+        '# header 2\n', ...
+        '# Chunk Coord1 Ncount\n', ...
+        '100 2 2\n', ...
+        '1 0 1\n', ...
+        '2 1\n', ...
+        '200 1 1\n', ...
+        '1 2 3\n']);
+    writeTextFile(filePath, content);
+    verifyError(testCase, @() read_chunk_step_fast(filePath, ...
+        'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off'), ...
+        'read_chunk_step_fast:BadDataRow');
+    verifyError(testCase, @() read_bin_chunk(filePath, ...
+        'ProgressMode', 'off'), 'read_bin_chunk:BadDataRow');
+end
+
+function testChunkReadersAcceptBlankLinesInsideBlock(testCase)
+    folder = tempname;
+    mkdir(folder);
+    cleanupObj = onCleanup(@() cleanupDirectory(folder)); %#ok<NASGU>
+    filePath = fullfile(folder, 'blank_rows.txt');
+    content = sprintf(['# header 1\n', ...
+        '# header 2\n', ...
+        '# Chunk Coord1 Ncount\n', ...
+        '100 2 2\n', ...
+        '1 0 1\n\n', ...
+        '2 1 1\n']);
+    writeTextFile(filePath, content);
+    fast = read_chunk_step_fast(filePath, 'SelectBy', 'Index', ...
+        'Index', 1, 'ProgressMode', 'off');
+    full = read_bin_chunk(filePath, 'ProgressMode', 'off');
+    verifyEqual(testCase, fast.data, [1 0 1; 2 1 1]);
+    verifyEqual(testCase, full.steps(1).data, fast.data);
+end
+
+function testChunkReadersRejectExtraFrameSummaryColumns(testCase)
+    folder = tempname;
+    mkdir(folder);
+    cleanupObj = onCleanup(@() cleanupDirectory(folder)); %#ok<NASGU>
+    filePath = fullfile(folder, 'bad_summary.txt');
+    content = sprintf(['# header 1\n', ...
+        '# header 2\n', ...
+        '# Chunk Coord1 Ncount\n', ...
+        '100 1 1 999\n', ...
+        '1 0 1\n']);
+    writeTextFile(filePath, content);
+    verifyError(testCase, @() read_chunk_step_fast(filePath, ...
+        'SelectBy', 'Index', 'Index', 1, 'ProgressMode', 'off'), ...
+        'read_chunk_step_fast:BadBlockHeader');
+    verifyError(testCase, @() read_bin_chunk(filePath, ...
+        'ProgressMode', 'off'), 'read_bin_chunk:BadBlockHeader');
+end
+
+function testChunk3dInputAutoResolution(testCase)
+    folder = tempname;
+    mkdir(folder);
+    cleanupObj = onCleanup(@() cleanupDirectory(folder)); %#ok<NASGU>
+    filePath = fullfile(folder, 'bin3d_case.txt');
+    writeTextFile(filePath, 'placeholder');
+    request = pd_create_request('chunk');
+    request.baseDir = folder;
+    request.chunk.dimension = '3d';
+    verifyEqual(testCase, pd_resolve_input_file(request), filePath);
 end
 
 function testExplicitChunk2dRejectsOneDimensionalInput(testCase)
@@ -224,6 +367,16 @@ function testCurrentSpidFieldVelocityAndUnits(testCase)
     verifyEqual(testCase, result.chunkKind, 'field');
 end
 
+function testCurrentSpidVelocityUsesRequestedDisplayUnit(testCase)
+    request = makeRequest(testCase, 'vx', 'spid_field_vx.txt');
+    request.analysisOptions = {'VelocityUnit', 'm/s'};
+    result = postdata_run(request);
+    verifyEqual(testCase, result.velocity, [-10000;0;10000], ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.velocityFactor, 10000);
+    verifyEqual(testCase, result.velocityUnit, 'm/s');
+end
+
 function testCurrentSpidClusterColumnAliases(testCase)
     request = makeRequest(testCase, 'cluster', 'spid_cluster.txt');
     request.analysisOptions = {'Dx', 0.5, 'Dim', 2, ...
@@ -233,6 +386,15 @@ function testCurrentSpidClusterColumnAliases(testCase)
     verifyEqual(testCase, result.filteredData(:, result.colIndex.x), [1;2]);
     verifyFalse(testCase, isempty(result.meanByBin.centers));
     verifyEqual(testCase, result.chunkKind, 'cluster');
+end
+
+function testLegacyClusterColumnAliasesAreBidirectional(testCase)
+    request = makeRequest(testCase, 'cluster', 'cluster_chunk_test.txt');
+    request.analysisOptions = {'Dx', 0.5, 'Dim', 2, ...
+        'XVarForMean', 'x'};
+    result = postdata_run(request);
+    verifyFalse(testCase, isempty(result.meanByBin.centers));
+    verifyTrue(testCase, any(result.meanByBin.count > 0));
 end
 
 function testSpidUnitConversionTable(testCase)
@@ -286,6 +448,18 @@ function testCurrentSpidMassXUsesLengthMetadata(testCase)
     verifyTrue(testCase, result.usedFileUnitMetadata);
     verifyEqual(testCase, result.chunkKind, 'spatial');
     verifyTrue(testCase, all(result.isMonotonicDecreasing));
+end
+
+function testCurrentSpidMassXUsesRequestedCoordinateUnit(testCase)
+    request = makeRequest(testCase, 'massx', 'spid_spatial1d.txt');
+    request.analysisOptions = pd_upsert_option( ...
+        request.analysisOptions, 'CoordinateUnit', 'mm');
+    result = postdata_run(request);
+    verifyEqual(testCase, result.coordinate, (0:0.005:0.02).', ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.coordinateFactor, 0.01, ...
+        'AbsTol', 1e-12);
+    verifyEqual(testCase, result.coordinateUnit, 'mm');
 end
 
 function testMassXRangeAndFixedDecreasingDirection(testCase)
@@ -923,6 +1097,7 @@ function testCorruptIndexCacheIsRebuilt(testCase)
     verifyTrue(testCase, isfield(step, 'index'));
     saved = load(cachePath, 'idx');
     verifyTrue(testCase, isfield(saved, 'idx'));
+    verifyEqual(testCase, saved.idx.formatVersion, 3);
     verifyEqual(testCase, saved.idx.timesteps, step.index.timesteps);
 end
 
@@ -1254,6 +1429,21 @@ function testDetailCsvDispatch(testCase)
         verifyGreaterThanOrEqual(testCase, numel(files), 1);
         verifyTrue(testCase, all(cellfun(@(p) exist(p, 'file') == 2, files)));
     end
+end
+
+function testChunk3dDetailCsvIncludesZ(testCase)
+    request = makeRequest(testCase, 'chunk', 'spid_spatial3d.txt');
+    request.chunk.variable = 'rho';
+    result = postdata_run(request);
+    outputDir = tempname;
+    mkdir(outputDir);
+    cleanupObj = onCleanup(@() cleanupDirectory(outputDir)); %#ok<NASGU>
+    files = pd_export_detail_csv(result, fullfile(outputDir, 'field3d'));
+    verifyEqual(testCase, numel(files), 1);
+    [header, values] = readNumericCsv(files{1}, 4);
+    verifyEqual(testCase, header, 'x,y,z,rho');
+    verifyEqual(testCase, numel(values), 4);
+    verifyEqual(testCase, values{3}, result.coordZ);
 end
 
 function testResultExportIncludesAllPlotDataCsvFiles(testCase)
@@ -1757,6 +1947,17 @@ function writeTextFile(filePath, content)
     end
     cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
     fprintf(fid, '%s', content);
+end
+
+function [header, values] = readNumericCsv(filePath, columnCount)
+    fid = fopen(filePath, 'r');
+    if fid < 0
+        error('test:FileOpenFailed', 'Cannot read test file: %s', filePath);
+    end
+    cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+    header = fgetl(fid);
+    format = repmat('%f', 1, columnCount);
+    values = textscan(fid, format, 'Delimiter', ',');
 end
 
 function cleanupNetworkFigures(previousFigures, previousVisible)

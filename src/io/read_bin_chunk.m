@@ -61,30 +61,8 @@ function out = read_bin_chunk(filePath, varargin)
         timestep = frame.timestep;
         numChunks = frame.numChunks;
         totalCount = frame.totalCount;
-        data = zeros(numChunks, numVars);
-
-        row = 1;
-        while row <= numChunks
-            dataLine = fgetl(fid);
-            if ~ischar(dataLine)
-                error('read_bin_chunk:UnexpectedEOF', ...
-                    'Unexpected EOF while reading timestep %g in %s', timestep, filePath);
-            end
-
-            if isempty(strtrim(dataLine))
-                continue;
-            end
-
-            values = sscanf(dataLine, '%f').';
-            if numel(values) < numVars
-                error('read_bin_chunk:BadDataRow', ...
-                    'Data row has %d columns but expected %d. Line: "%s"', ...
-                    numel(values), numVars, dataLine);
-            end
-
-            data(row, :) = values(1:numVars);
-            row = row + 1;
-        end
+        data = pd_read_chunk_data_rows(fid, numChunks, numVars, ...
+            'read_bin_chunk', timestep);
 
         data = applyEmptyCellNaN(data, validVarNames);
 

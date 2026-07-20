@@ -54,10 +54,6 @@ function result = run_analysis(taskType, varargin)
     request.selection.value = selectionValue(opt);
     request.selection.slurmPath = pd_to_char(opt.SlurmPath);
     request.selection.slurmModuleIndex = opt.SlurmModuleIndex;
-    if strcmpi(request.selection.mode, 'Time') && isempty(request.selection.slurmPath)
-        request.selection.slurmPath = get_slurm_txt_fullpath(request.baseDir);
-    end
-
     switch type
         case 'chunk'
             request.filePath = legacyFile(opt.ChunkFile, 'ChunkFile');

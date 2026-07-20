@@ -32,10 +32,10 @@ result = postdata_run(request);
 
 ## 分析类型
 
-- `chunk`：一维或二维原始场/派生场。`ChunkDim=auto` 会根据 `Coord2/c_y` 是否存在自动识别维度，避免一维文件误报缺少 `Coord2`。
+- `chunk`：一维、二维或三维原始场/派生场。`ChunkDim=auto` 会根据 `Coord2/c_y` 和 `Coord3/c_z` 自动识别维度，避免一维文件误报缺少高维坐标。
 - `cluster`：团簇尺寸、概率分布、CDF、拟合和位置分箱统计。
 - `vx`：mass-v 面密度分布，默认从最大速度向最小速度累积。
-- `massx`：仅用于平面二维 SPH 结果，根据 chunk 中的 `Ncount`、初始密度、初始粒子间距和 y 统计宽度计算 mass-x；固定从最大 x 向最小 x 累积，纵轴单位为 `mg/cm^2`。
+- `massx`：仅用于 SPH 结果，根据一维/二维 chunk 中的 `Ncount`、初始密度、初始粒子间距和横向统计宽度计算二维或三维 SPH 的 mass-x；固定从最大 x 向最小 x 累积，纵轴单位为 `mg/cm^2`。
 - `network2d`：二维孔隙/基体几何、拓扑、连通性、方向剖面和演化统计。
 
 ### SPH mass-x 物理模型
@@ -53,9 +53,11 @@ localArealDensity = Ncount * particleLineMass
 
 其中 `rho0=InitialDensity`，单位为 `g/cm^3`；`d0=ParticleSpacing` 和
 `Wy` 都使用原始模拟坐标单位；`Lunit=RawLengthUnitUm*1e-4 cm`。本 SPH
-单位制通常为一个原始坐标单位等于 `10 um`，所以 `RawLengthUnitUm=10`，
-同时绘图坐标设置 `CoordinateFactor=10` 后直接显示为 `um`。显示缩放与物理
-单位参数分别保存，不能混用。
+单位制通常为一个原始坐标单位等于 `10 um`，所以旧文件可设置
+`RawLengthUnitUm=10`，同时令 `CoordinateFactor=10` 后直接显示为 `um`。
+新版 SPID 文件在 `UseFileUnitMetadata=true` 时会按 `CoordinateUnit` 自动设置
+物理长度和显示换算；关闭该选项后仍使用手动参数。显示缩放与物理单位参数
+分别保存，不能混用。
 
 - `bin1d` 不含 y 范围，必须显式设置 `TransverseWidth`。
 - `bin2d` 默认对完整 y 宽度统计；设置 `SliceCentersY` 和
@@ -90,13 +92,19 @@ format. Current SPID headers may contain:
 
 - Header length is not fixed; `Units`, `Name`, and `Kind` metadata are kept.
 - Embedded `# Time` values support `SelectBy=Time` without a Slurm file.
+- Legacy files without embedded time automatically use a unique `slurm*` file
+  beside the input, or the explicitly selected Slurm path.
 - `spatial` output supports automatic 1D, 2D, and 3D coordinate detection.
 - `field` mass-v output automatically uses `Coord1`; legacy files keep
   `Chunk` as the preferred automatic coordinate.
 - `cluster` output accepts both SPID `x/y/z` and legacy `c_x/c_y/c_z` names.
 - When `UseFileUnitMetadata=true`, known SPID unit systems are converted to
-  the displayed mass-v and mass-x units. Metadata-free files keep the existing
-  manual factors.
+  the requested mass-v (`km/s`, `m/s`, `cm/us`, `um/ns`, native) and mass-x
+  coordinate (`nm`, `um`, `mm`, `cm`, `m`, native) units. Metadata-free files
+  keep the existing manual factors.
+- Every data row and frame summary is validated as an exact line-oriented
+  record before analysis; malformed files fail explicitly instead of shifting
+  values between rows.
 
 ## 图形界面
 

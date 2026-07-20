@@ -124,7 +124,7 @@ classdef PostDataApp < handle
             addLabel(controls, pd_ui_text('Timestep/index'), 0.595);
             obj.SelectionEdit = addEdit(controls, '1', [0.04, 0.545, 0.92, 0.048]);
 
-            addLabel(controls, pd_ui_text('Slurm file (required for physical-time selection)'), 0.485);
+            addLabel(controls, pd_ui_text('Slurm file (legacy physical-time fallback)'), 0.485);
             obj.SlurmEdit = addEdit(controls, '', [0.04, 0.435, 0.72, 0.048]);
             obj.SlurmBrowseButton = addButton(controls, 'Browse', [0.78, 0.435, 0.18, 0.048], ...
                 @(src, evt)obj.browseSlurm(src, evt));

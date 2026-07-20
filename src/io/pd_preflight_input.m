@@ -20,21 +20,9 @@ function report = pd_preflight_input(request, filePath)
     validNames = preamble.validVarNames;
     firstDataColumns = 0;
     if frame.numChunks > 0
-        firstDataLine = fgetl(fid);
-        while ischar(firstDataLine) && isempty(strtrim(firstDataLine))
-            firstDataLine = fgetl(fid);
-        end
-        if ~ischar(firstDataLine)
-            error('postdata:PreflightMissingDataRow', ...
-                'The first block declares rows but contains no data.');
-        end
-        firstData = sscanf(firstDataLine, '%f').';
-        firstDataColumns = numel(firstData);
-        if firstDataColumns ~= numel(variables)
-            error('postdata:PreflightDataColumnMismatch', ...
-                'First data row has %d columns; the header declares %d.', ...
-                firstDataColumns, numel(variables));
-        end
+        pd_read_chunk_data_rows(fid, 1, numel(variables), ...
+            'postdata:preflight', frame.timestep);
+        firstDataColumns = numel(variables);
     end
     required = requiredVariables(request);
     for i = 1:numel(required)

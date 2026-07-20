@@ -134,6 +134,11 @@ function request = pd_validate_request(request)
         error('postdata:validateRequest:BadSelection', ...
             'selection.mode and selection.slurmPath must be text.');
     end
+    if ~isempty(request.selection.slurmPath) && ...
+            ~pd_is_absolute_path(request.selection.slurmPath)
+        request.selection.slurmPath = fullfile(request.baseDir, ...
+            request.selection.slurmPath);
+    end
     switch lower(strtrim(request.selection.mode))
         case 'index'
             request.selection.mode = 'Index';
@@ -166,11 +171,8 @@ function request = pd_validate_request(request)
             'selection.slurmModuleIndex must be a positive integer.');
     end
     request.selection.slurmModuleIndex = round(request.selection.slurmModuleIndex);
-    if strcmpi(request.selection.mode, 'Time') && isempty(request.selection.slurmPath)
-        error('postdata:validateRequest:MissingSlurmPath', ...
-            'selection.slurmPath is required for Time selection.');
-    end
     if strcmpi(request.selection.mode, 'Time') && ...
+            ~isempty(request.selection.slurmPath) && ...
             ~exist(request.selection.slurmPath, 'file')
         error('postdata:validateRequest:SlurmFileNotFound', ...
             'selection.slurmPath does not exist: %s', request.selection.slurmPath);

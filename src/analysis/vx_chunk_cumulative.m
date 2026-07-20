@@ -25,8 +25,10 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
     p.addParameter('MakePlot', true, @islogical);
     p.parse(vxChunkPath, varargin{:});
     opt = p.Results;
-    validatePositiveFactor(opt.VelocityFactor);
-    validatePositiveFactor(opt.DensityFactor);
+    validatePositiveFactor(opt.VelocityFactor, 'VelocityFactor', ...
+        'vx_chunk_cumulative:BadVelocityFactor');
+    validatePositiveFactor(opt.DensityFactor, 'DensityFactor', ...
+        'vx_chunk_cumulative:BadDensityFactor');
     vxChunkPath = toChar(vxChunkPath);
 
     selectorArgs = {'SelectBy', toChar(opt.SelectBy), 'Index', opt.Index, ...
@@ -47,7 +49,7 @@ function out = vx_chunk_cumulative(vxChunkPath, varargin)
     units = pd_spid_unit_info(step.unitSystem);
     usedFileUnitMetadata = opt.UseFileUnitMetadata && units.isKnown;
     if usedFileUnitMetadata
-        velocityFactor = units.velocityKmSPerUnit;
+        velocityFactor = metadataVelocityFactor(units, opt.VelocityUnit);
         densityFactor = units.arealDensityMgCm2PerUnit;
     end
     velocity = step.data(:, step.colIndex.(velocityVar)) .* velocityFactor;
@@ -149,10 +151,29 @@ function info = buildSelectionInfo(step, opt)
     end
 end
 
-function validatePositiveFactor(value)
+function factor = metadataVelocityFactor(units, requestedUnit)
+    unit = lower(regexprep(strtrim(toChar(requestedUnit)), '\s+', ''));
+    switch unit
+        case {'km/s','km/sec','um/ns'}
+            factor = units.velocityKmSPerUnit;
+        case {'m/s','m/sec'}
+            factor = 1000 .* units.velocityKmSPerUnit;
+        case {'cm/us','cm/microsecond'}
+            factor = units.velocityKmSPerUnit ./ 10;
+        case {'native','raw'}
+            factor = 1;
+        otherwise
+            error('vx_chunk_cumulative:UnsupportedVelocityUnit', ...
+                ['VelocityUnit "%s" cannot be derived from SPID Units ' ...
+                 'metadata. Use km/s, m/s, cm/us, um/ns, native, or set ' ...
+                 'UseFileUnitMetadata=false with a manual VelocityFactor.'], ...
+                toChar(requestedUnit));
+    end
+end
+
+function validatePositiveFactor(value, name, errorId)
     if ~(isnumeric(value) && isscalar(value) && isfinite(value) && value > 0)
-        error('vx_chunk_cumulative:BadVelocityFactor', ...
-            'VelocityFactor must be a positive finite scalar.');
+        error(errorId, '%s must be a positive finite scalar.', name);
     end
 end
 

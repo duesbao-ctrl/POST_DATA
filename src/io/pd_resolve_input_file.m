@@ -23,7 +23,7 @@ function filePath = pd_resolve_input_file(request)
                 'Multiple files match %s; select one explicitly.', strjoin(patterns, ' or '));
         end
         filePath = fullfile(request.baseDir, files(1).name);
-    elseif ~isAbsolutePath(filePath)
+    elseif ~pd_is_absolute_path(filePath)
         filePath = fullfile(request.baseDir, filePath);
     end
 
@@ -39,8 +39,10 @@ function patterns = defaultPatterns(request)
                 patterns = {'bin1d*.txt'};
             elseif strcmpi(request.chunk.dimension, '2d')
                 patterns = {'bin2d*.txt'};
+            elseif strcmpi(request.chunk.dimension, '3d')
+                patterns = {'bin3d*.txt'};
             else
-                patterns = {'bin1d*.txt','bin2d*.txt'};
+                patterns = {'bin1d*.txt','bin2d*.txt','bin3d*.txt'};
             end
         case 'network2d'
             patterns = {'bin2d*.txt'};
@@ -50,14 +52,5 @@ function patterns = defaultPatterns(request)
             patterns = {'mass_v*.txt','massv*.txt','vx_chunk*.txt'};
         case 'massx'
             patterns = {'mass_x*.txt','massx*.txt','bin1d*.txt','bin2d*.txt'};
-    end
-end
-
-function tf = isAbsolutePath(pathValue)
-    tf = false;
-    if numel(pathValue) >= 2 && pathValue(2) == ':'
-        tf = true;
-    elseif numel(pathValue) >= 2 && strcmp(pathValue(1:2), '\\')
-        tf = true;
     end
 end
