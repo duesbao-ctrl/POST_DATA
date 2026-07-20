@@ -32,18 +32,20 @@ function frame = pd_read_next_chunk_frame_header(fid, callerId)
             timeToken = regexp(content, ...
                 '^Time\s+([^\s]+)\s*$', 'tokens', 'once');
             if ~isempty(timeToken)
-                value = sscanf(timeToken{1}, '%f');
-                if numel(value) ~= 1 || ~isfinite(value)
+                value = str2double(timeToken{1});
+                if ~(isscalar(value) && isfinite(value))
                     error([callerId, ':BadPhysicalTime'], ...
                         'Invalid SPID physical time comment: "%s"', line);
                 end
                 physicalTime = value;
+            elseif ~isempty(regexp(content, '^Time(?:\s|$)', 'once'))
+                error([callerId, ':BadPhysicalTime'], ...
+                    'Invalid SPID physical time comment: "%s"', line);
             end
             continue;
         end
 
-        values = sscanf(line, '%f').';
-        validateSummary(values, line, callerId);
+        values = pd_parse_chunk_summary_line(line, callerId);
         frame.eof = false;
         frame.blockPosition = linePosition;
         frame.dataPosition = ftell(fid);
@@ -54,16 +56,6 @@ function frame = pd_read_next_chunk_frame_header(fid, callerId)
         frame.physicalTime = physicalTime;
         frame.prefixLines = prefixLines;
         return;
-    end
-end
-
-function validateSummary(values, line, callerId)
-    if numel(values) < 3 || ~all(isfinite(values(1:3))) || ...
-            values(2) < 0 || ...
-            abs(values(2) - round(values(2))) > 1e-12
-        error([callerId, ':BadBlockHeader'], ...
-            ['Invalid block header. Expected finite timestep, non-negative ' ...
-             'integer row count, and finite total count. Line: "%s"'], line);
     end
 end
 

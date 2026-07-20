@@ -16,7 +16,7 @@ Load ready-to-run test data for the current analysis type	按当前分析类型�
 Analysis type	分析类型
 Timestep selection mode	时刻选择方式
 Timestep/index	时刻/序号
-Slurm file (required for physical-time selection)	Slurm 文件（按物理时间选择时需要）
+Slurm file (legacy physical-time fallback)	Slurm 文件（旧格式按物理时间选择时备用）
 Progress display	进度显示
 Result retention level	结果保留级别
 Run analysis (F5)	运行分析（F5）

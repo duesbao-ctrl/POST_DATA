@@ -5,7 +5,15 @@ function files = pd_export_detail_csv(result, basePath)
     switch result.analysisType
         case 'chunk'
             path = [basePath, '_field.csv'];
-            if isempty(result.y)
+            if isfield(result, 'variableUsed') && isfield(result, 'dimension')
+                plotData = pd_result_plot_data(result, 'field');
+                pd_write_numeric_csv(path, plotData.ColumnNames, ...
+                    plotData.Values);
+            elseif isfield(result, 'coordZ') && ~isempty(result.coordZ)
+                pd_write_numeric_csv(path, {'x','y','z','value'}, ...
+                    [result.x(:), result.y(:), result.coordZ(:), ...
+                     result.value(:)]);
+            elseif isempty(result.y)
                 pd_write_numeric_csv(path, {'x','value'}, [result.x(:), result.value(:)]);
             else
                 pd_write_numeric_csv(path, {'x','y','value'}, ...

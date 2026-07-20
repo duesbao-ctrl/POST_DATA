@@ -318,22 +318,30 @@ end
 function name = resolveClusterVariable(col, requested)
     requested = matlab.lang.makeValidName(toChar(requested));
     candidates = {requested};
-    switch requested
+    switch lower(requested)
         case 'c_x'
             candidates = {'c_x','x'};
+        case 'x'
+            candidates = {'x','c_x'};
         case 'c_y'
             candidates = {'c_y','y'};
+        case 'y'
+            candidates = {'y','c_y'};
         case 'c_z'
             candidates = {'c_z','z'};
+        case 'z'
+            candidates = {'z','c_z'};
     end
     name = resolveFirstColumn(col, candidates);
 end
 
 function name = resolveFirstColumn(col, candidates)
     name = '';
+    fields = fieldnames(col);
     for i = 1:numel(candidates)
-        if isfield(col, candidates{i})
-            name = candidates{i};
+        index = find(strcmpi(candidates{i}, fields), 1, 'first');
+        if ~isempty(index)
+            name = fields{index};
             return;
         end
     end

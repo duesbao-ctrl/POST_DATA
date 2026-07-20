@@ -78,12 +78,22 @@ function out = read_chunk_step_fast(filePath, varargin)
             sel = candidates(nearest);
             reqStep = idx.timesteps(sel);
         else
-            if isempty(opt.SlurmPath)
-                error('read_chunk_step_fast:MissingSlurmPath', ...
-                    ['SlurmPath is required when selecting by Time from a ' ...
-                     'legacy chunk file without "# Time" metadata.']);
+            slurmPath = opt.SlurmPath;
+            if isempty(slurmPath)
+                try
+                    slurmPath = get_slurm_txt_fullpath(fileparts(filePath));
+                catch discoveryError
+                    if strcmp(discoveryError.identifier, ...
+                            'get_slurm_txt_fullpath:NoMatch')
+                        error('read_chunk_step_fast:MissingSlurmPath', ...
+                            ['SlurmPath is required when selecting by Time ' ...
+                             'from a legacy chunk file without "# Time" ' ...
+                             'metadata.']);
+                    end
+                    rethrow(discoveryError);
+                end
             end
-            S = read_slurm_stepcpu(opt.SlurmPath);
+            S = read_slurm_stepcpu(slurmPath);
             m = round(opt.SlurmModuleIndex);
             if m < 1 || m > numel(S.modules)
                 error('read_chunk_step_fast:BadSlurmModule', ...
@@ -138,40 +148,17 @@ function out = read_chunk_step_fast(filePath, varargin)
             'Cannot seek to block %d in file: %s', sel, filePath);
     end
     bh = fgetl(fid);
-    h = sscanf(bh, '%f').';
-    validateBlockHeader(h, bh, 'read_chunk_step_fast:BadBlockHeader');
+    h = pd_parse_chunk_summary_line(bh, 'read_chunk_step_fast');
     timestep = h(1);
     numChunks = round(h(2));
     totalCount = h(3);
 
-    fmt = repmat('%f', 1, numVars);
-    C = textscan(fid, fmt, numChunks, 'CollectOutput', true, ...
-        'Delimiter', ' \t', 'MultipleDelimsAsOne', true);
-    data = C{1};
-
-    if size(data, 1) ~= numChunks
-        % Fallback robust path if textscan is short-read on malformed lines.
-        data = zeros(numChunks, numVars);
-        fseek(fid, idx.dataPos(sel), 'bof');
-        for i = 1:numChunks
-            if mod(i - 1, 256) == 0
-                fraction = 0.65 + 0.34 * (i - 1) / max(numChunks, 1);
-                reportProgress(opt.CancelCallback, opt.ProgressCallback, ...
-                    fraction, 'Reading selected timestep data');
-            end
-            ln = fgetl(fid);
-            if ~ischar(ln)
-                error('read_chunk_step_fast:UnexpectedEOF', ...
-                    'Unexpected EOF while reading block at timestep %g', timestep);
-            end
-            v = sscanf(ln, '%f').';
-            if numel(v) < numVars
-                error('read_chunk_step_fast:BadDataRow', ...
-                    'Data row has %d columns, expected %d', numel(v), numVars);
-            end
-            data(i, :) = v(1:numVars);
-        end
-    end
+    rowProgress = @(rowsRead, totalRows) reportProgress( ...
+        opt.CancelCallback, opt.ProgressCallback, ...
+        0.65 + 0.34 .* rowsRead ./ max(totalRows, 1), ...
+        'Reading selected timestep data');
+    data = pd_read_chunk_data_rows(fid, numChunks, numVars, ...
+        'read_chunk_step_fast', timestep, rowProgress);
 
     colIndex = struct();
     for i = 1:numel(validVarNames)
@@ -254,7 +241,7 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
                     isfield(S.idx, 'fileDatenum')
                 hasSig = isfield(S.idx, 'quickSig');
                 hasCurrentFormat = isfield(S.idx, 'formatVersion') && ...
-                    isequal(S.idx.formatVersion, 2) && ...
+                    isequal(S.idx.formatVersion, chunkIndexFormatVersion()) && ...
                     isfield(S.idx, 'physicalTimes') && ...
                     isfield(S.idx, 'metadata');
                 sameSig = hasSig && isSameQuickSig(S.idx.quickSig, curSig);
@@ -314,12 +301,9 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
         physicalTimes(n) = frame.physicalTime;
         numChunks(n) = frame.numChunks;
 
-        for i = 1:numChunks(n)
-            if ~ischar(fgetl(fid))
-                error('read_chunk_step_fast:UnexpectedEOF', ...
-                    'Unexpected EOF while indexing timestep %g.', frame.timestep);
-            end
-        end
+        pd_read_chunk_data_rows(fid, frame.numChunks, ...
+            numel(preamble.varNames), 'read_chunk_step_fast', ...
+            frame.timestep);
         tracker.update(ftell(fid) / totalBytes);
         if mod(n, 16) == 0
             reportProgress(cancelCallback, progressCallback, ...
@@ -345,7 +329,7 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
     end
 
     idx = struct();
-    idx.formatVersion = 2;
+    idx.formatVersion = chunkIndexFormatVersion();
     idx.filePath = filePath;
     idx.fileSize = d.bytes;
     idx.fileDatenum = d.datenum;
@@ -371,13 +355,8 @@ function idx = buildOrLoadIndex(filePath, progressMode, cancelCallback, progress
     tracker.finish();
 end
 
-function validateBlockHeader(values, line, errorId)
-    if numel(values) < 3 || ~all(isfinite(values(1:3))) || ...
-            values(2) < 0 || abs(values(2) - round(values(2))) > 1e-12
-        error(errorId, ...
-            ['Invalid block header. Expected finite timestep, non-negative ' ...
-             'integer row count, and finite total count. Line: "%s"'], line);
-    end
+function value = chunkIndexFormatVersion()
+    value = 3;
 end
 
 function writeIndexCache(cachePath, idx)
@@ -411,8 +390,8 @@ function reportProgress(cancelCallback, progressCallback, fraction, message)
 end
 
 function validateReaderOptions(options)
-    mode = lower(strtrim(options.ProgressMode));
-    if ~any(strcmp(mode, {'auto','console','waitbar','off'}))
+    mode = strtrim(options.ProgressMode);
+    if ~any(strcmpi(mode, {'auto','console','waitbar','off'}))
         error('read_chunk_step_fast:BadProgressMode', ...
             'ProgressMode must be auto, console, waitbar, or off.');
     end

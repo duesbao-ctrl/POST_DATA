@@ -61,12 +61,16 @@ result = run_analysis('chunk', ...
 `# Units`、`# Name ... Kind ...` 和逐帧 `# Time` 会写入预检及结果元数据。
 
 - `SelectBy=Time` 优先使用文件内的物理时间，不再强制依赖 Slurm；旧文件仍按
-  原逻辑使用 Slurm 映射。
+  原逻辑使用显式 Slurm 路径或自动寻找输入文件同目录的唯一 `slurm*` 文件。
 - `spatial` 自动识别一维、二维和三维坐标。
 - `field` 类型的 mass-v 自动使用 `Coord1`；旧格式仍优先使用 `Chunk`。
 - `cluster` 同时支持新版 `x/y/z` 和旧版 `c_x/c_y/c_z`。
-- `UseFileUnitMetadata=true` 时，已知 SPID 单位制会自动换算 mass-v 和 mass-x；
-  没有单位元数据的旧文件继续使用原有手动换算参数。
+- `UseFileUnitMetadata=true` 时，已知 SPID 单位制会自动换算到指定的 mass-v
+  显示单位（`km/s`、`m/s`、`cm/us`、`um/ns`、native）和 mass-x 坐标单位
+  （`nm`、`um`、`mm`、`cm`、`m`、native）；没有单位元数据的旧文件继续使用
+  原有手动换算参数。
+- 数据行和帧摘要均按严格的逐行列数契约解析，缺列、多列或尾随非数字内容会
+  明确报错，不会跨行错位后继续计算。
 
 ## SPH mass-x 单位与分片
 
@@ -77,9 +81,10 @@ result = run_analysis('chunk', ...
 
 `InitialDensity` 的单位为 `g/cm^3`。`ParticleSpacing`、`TransverseWidth`、
 `OutOfPlaneWidth`、`SliceCentersY` 和 `SliceWidthsY` 均使用原始 SPH 坐标
-单位。通常一个原始坐标单位等于 `10 um`，应设置 `RawLengthUnitUm=10`；
-绘图坐标另设 `CoordinateFactor=10` 后显示为 `um`。这两个参数分别控制物理
-换算和显示，不能混用。
+单位。旧文件通常一个原始坐标单位等于 `10 um`，可设置
+`RawLengthUnitUm=10` 并令 `CoordinateFactor=10` 后显示为 `um`。新版 SPID
+文件在 `UseFileUnitMetadata=true` 时会按 `CoordinateUnit` 自动设置这两类换算；
+关闭该选项后继续使用手动参数。物理换算和显示缩放不能混用。
 
 bin1d 必须指定完整 y 宽度。bin2d 默认使用完整 y 网格，也可通过
 `SliceCentersY` 与 `SliceWidthsY` 同时输出多个位置/宽度的曲线。边界落在

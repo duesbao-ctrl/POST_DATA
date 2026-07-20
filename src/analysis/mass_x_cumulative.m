@@ -53,9 +53,8 @@ function out = mass_x_cumulative(chunkPath, varargin)
     usedFileUnitMetadata = opt.UseFileUnitMetadata && units.isKnown;
     if usedFileUnitMetadata
         opt.RawLengthUnitUm = units.lengthUmPerUnit;
-        if strcmpi(strtrim(toChar(opt.CoordinateUnit)), 'um')
-            opt.CoordinateFactor = units.lengthUmPerUnit;
-        end
+        opt.CoordinateFactor = metadataCoordinateFactor( ...
+            units, opt.CoordinateUnit);
     end
 
     xVar = resolveVariable(step.colIndex, opt.CoordinateVar, ...
@@ -448,6 +447,30 @@ function validateOptions(opt)
         error('mass_x_cumulative:DirectionMustDecrease', ...
             ['mass-x is defined as accumulation from large x to small x; ', ...
              'CumulativeDirection must be high-to-low.']);
+    end
+end
+
+function factor = metadataCoordinateFactor(units, requestedUnit)
+    unit = lower(regexprep(strtrim(toChar(requestedUnit)), '\s+', ''));
+    switch unit
+        case {'um','micrometer','micrometers'}
+            factor = units.lengthUmPerUnit;
+        case {'nm','nanometer','nanometers'}
+            factor = 1000 .* units.lengthUmPerUnit;
+        case {'mm','millimeter','millimeters'}
+            factor = 1e-3 .* units.lengthUmPerUnit;
+        case {'cm','centimeter','centimeters'}
+            factor = 1e-4 .* units.lengthUmPerUnit;
+        case {'m','meter','meters'}
+            factor = 1e-6 .* units.lengthUmPerUnit;
+        case {'native','raw'}
+            factor = 1;
+        otherwise
+            error('mass_x_cumulative:UnsupportedCoordinateUnit', ...
+                ['CoordinateUnit "%s" cannot be derived from SPID Units ' ...
+                 'metadata. Use nm, um, mm, cm, m, native, or set ' ...
+                 'UseFileUnitMetadata=false with a manual CoordinateFactor.'], ...
+                toChar(requestedUnit));
     end
 end
 
