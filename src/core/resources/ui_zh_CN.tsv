@@ -1,0 +1,188 @@
+# English fallback key	zh_CN
+POST_DATA2 MATLAB post-processing software	POST_DATA2 MATLAB 后处理软件
+Select data and analysis; validate parameters; run; review or export results	①选择数据和分析类型  ②检查参数  ③运行  ④查看或导出结果
+Data and run	数据与运行
+Result plots	结果图
+Plot data	绘图数据
+Calculation parameters	计算参数
+Plot settings	绘图条件
+Output settings	输出条件
+Result summary	结果摘要
+Data file	数据文件
+Select a chunk, cluster, or distribution data file	选择 chunk、cluster 或统计数据文件
+Browse	浏览
+Example data	示例数据
+Load ready-to-run test data for the current analysis type	按当前分析类型载入可直接运行的测试数据
+Analysis type	分析类型
+Timestep selection mode	时刻选择方式
+Timestep/index	时刻/序号
+Slurm file (legacy physical-time fallback)	Slurm 文件（旧格式按物理时间选择时备用）
+Progress display	进度显示
+Result retention level	结果保留级别
+Run analysis (F5)	运行分析（F5）
+Run the current analysis and display result plots when complete	运行当前分析，完成后自动显示结果图
+Cancel (Esc)	取消（Esc）
+Save configuration	保存配置
+Load configuration	加载配置
+Restore default parameters	恢复默认参数
+Ready	就绪
+Current view	当前视图
+All views	全部视图
+Not run yet	尚未运行
+Open separate figures after run	运行后打开独立图窗
+Open one scalable, savable MATLAB figure for each result by default	默认每种结果打开一个可缩放、可保存的 MATLAB 图窗
+Open all figures	打开全部图窗
+Close separate figures	关闭独立图窗
+Apply plot settings and refresh	应用绘图条件并刷新
+View plotted data	查看绘图数据
+Data view	数据视图
+Previous page	上一页
+Page 0 of 0	第 0/0 页
+Next page	下一页
+Include column headers when copying	复制时包含表头
+Clear this option to copy numeric rows without column names.	取消勾选后只复制数值行，不复制列名。
+Run an analysis to inspect plot data.	运行分析后可查看每幅图的实际数据。
+Copy selected rows	复制所选行
+Copy all data	复制全部数据
+Export this view as CSV	导出当前视图 CSV
+Parameter editor (select a table row to edit it here)	参数编辑器（选中表格行后在此修改）
+Select a calculation parameter first	请先选择一个计算参数
+Enabled	启用
+Apply parameter value	应用参数值
+Publication style preset	论文样式预设
+High contrast	高对比展示
+Restore defaults	恢复默认
+Journal color	期刊彩色
+Monochrome print	黑白打印
+Apply preset	应用预设
+All parameters can be refined in the table or editor below	所有参数均可在表格或下方编辑器中继续微调
+Plot settings editor (changes do not require recalculation)	绘图条件编辑器（修改后无需重新计算）
+Select a plot setting first	请先选择一个绘图条件
+Apply plot value	应用绘图值
+Select output directory	选择输出目录
+Export current result	导出当前结果
+Value	数值
+Result field	结果字段
+1D field (401 grid points x 3 timesteps)	一维场（401 网格 × 3 时刻）
+2D field (61 x 41 grid x 3 timesteps)	二维场（61 × 41 网格 × 3 时刻）
+Particle/cluster (1200 items x 3 timesteps)	颗粒度/团簇（1200 个 × 3 时刻）
+mass-x cumulative distribution	mass-x 累积分布
+mass-x 2D sliced distribution	mass-x 二维分片分布
+SPH particle count by X bin	SPH 每个 X 区间的粒子数
+2D pore network	二维孔隙网络
+mass-v cumulative distribution	mass-v 累积分布
+Tools	工具
+Validate current input and parameters	检查当前输入与参数
+System diagnostics	系统诊断
+Open run log	打开运行日志
+Help	帮助
+Quick start and shortcuts	快速开始与快捷键
+About POST_DATA2	关于 POST_DATA2
+Loaded %s example. Review parameters and press F5 to run.	已载入 %s 示例。可检查参数后按 F5 运行。
+Quick workflow:	快速流程：
+1. Select a data file, or load one from the Example Data menu.	1. 选择数据文件，或从“示例数据”菜单一键载入。
+2. Select an analysis type and review the Calculation Parameters tab.	2. 选择分析类型并在“计算参数”页检查参数。
+3. Press F5 to run; the Result Plots tab opens automatically.	3. 按 F5 运行；完成后自动切到“结果图”。
+4. A separate MATLAB figure opens for each result by default.	4. 默认同时打开每个结果的独立 MATLAB 图窗。
+5. Adjust and export from Plot Settings and Output Settings.	5. 在“绘图条件”和“输出条件”中调整并导出。
+Shortcuts: F5 run, Esc cancel, Ctrl+O browse, Ctrl+E load example.	快捷键：F5 运行，Esc 取消，Ctrl+O 浏览文件，Ctrl+E 载入示例。
+POST_DATA2 Quick Start	POST_DATA2 快速开始
+MATLAB post-processing software	MATLAB 后处理软件
+Minimum compatible release:	最低兼容版本：
+Supports chunk, cluster, mass-v, mass-x, and network2d.	支持 chunk、cluster、mass-v、mass-x 和 network2d。
+%s, ... (%d columns total)	%s, ...（共 %d 列）
+Input and parameter validation passed	输入与参数检查通过
+File:	文件：
+Size: %.3f MB	大小：%.3f MB
+First timestep: %g	首个时间步：%g
+First-block data rows: %d	首块数据行：%d
+POST_DATA2 Preflight Check	POST_DATA2 运行前检查
+Variables:	变量：
+Input file, analysis type, and parameters passed validation.	输入文件、分析类型和参数检查通过。
+Available	可用
+Unavailable (only optional skeleton/thickness metrics are affected)	不可用（仅影响可选骨架/厚度指标）
+MATLAB:	MATLAB：
+Runtime release:	运行版本：
+Project directory:	项目目录：
+Default output:	默认输出：
+Run log:	运行日志：
+Image Processing Toolbox:	Image Processing Toolbox：
+Conclusion: core runtime checks passed.	结论：核心运行环境检查通过。
+Notes:	注意事项：
+POST_DATA2 System Diagnostics	POST_DATA2 系统诊断
+System diagnostics completed.	系统诊断已完成。
+Opened run log:	已打开运行日志：
+Select POST_DATA data file	选择 POST_DATA 数据文件
+Data file selected; review the analysis type and parameters.	数据文件已选择，请检查分析类型和参数。
+Select Slurm log	选择 Slurm 日志
+Switched to %s with %d editable calculation parameters.	已切换到%s，共 %d 个可编辑计算参数。
+Reading data and running analysis, please wait...	正在读取数据并执行分析，请稍候……
+%s completed: timestep = %g, generated %d result views.	%s完成：timestep = %g，已生成 %d 个结果视图。
+Analysis cancelled by user.	分析已由用户取消。
+Select an existing data file.	请选择一个存在的数据文件。
+Plot settings applied immediately without recalculation.	绘图条件已立即应用，无需重新计算。
+Total: %d views	共 %d 幅
+%s / Total: %d views	%s / 共 %d 幅
+Run an analysis before viewing plot data.	请先运行分析，再查看绘图数据。
+%s: %d rows x %d columns; showing rows %d-%d.	%s：共 %d 行 × %d 列；当前显示第 %d-%d 行。
+Page %d of %d	第 %d/%d 页
+Run an analysis before copying plot data.	请先运行分析，再复制绘图数据。
+Select one or more data rows first.	请先选择一行或多行数据。
+Copied %d plot-data rows to the clipboard.	已复制 %d 行绘图数据到剪贴板。
+Run an analysis before exporting plot data.	请先运行分析，再导出绘图数据。
+Export plotted data as CSV	将绘图数据导出为 CSV
+Plot data exported:	绘图数据已导出：
+Closed %d separate result figures.	已关闭 %d 个独立结果图窗。
+Error identifier:	错误标识：
+Detailed log:	详细日志：
+Error:	错误：
+Invalid parameter:	参数无效：
+A value is required.	必须填写该参数。
+Description	说明
+Parameter	参数
+1D/2D field analysis	一维/二维场分析
+2D pore network analysis	二维孔隙网络分析
+Particle/cluster analysis	颗粒度/团簇分析
+mass-v analysis	mass-v 分析
+mass-x analysis	mass-x 分析
+SPH mass-x (m-x) analysis	SPH mass-x（m-x）分析
+%s: %d editable calculation parameters	%s：%d 个可编辑计算参数
+SPH mass-x (m-x): InitialDensity and ParticleSpacing are required; bin1d also requires TransverseWidth. (%d parameters)	SPH mass-x（m-x）：必须填写初始密度和初始粒子间距；bin1d 还必须填写横向宽度。（共 %d 个参数）
+%s | Inactive until %s = %s	%s｜仅当 %s = %s 时启用
+[inactive: %s=%s] %s	[未启用：%s=%s] %s
+SPH chunk dimension: auto, 1d, or 2d	SPH chunk 维度：auto、1d 或 2d
+Coordinate column; auto tries Coord1, c_x, then Chunk	X 坐标列；auto 依次尝试 Coord1、c_x、Chunk
+Y column for bin2d; auto tries Coord2 then c_y	bin2d 的 Y 坐标列；auto 依次尝试 Coord2、c_y
+SPH particle-count column	SPH 粒子计数列
+Physical SPH dimension: 2 or 3	SPH 物理维度：2 或 3
+Initial SPH material density in g/cm^3	SPH 材料初始密度，单位 g/cm^3
+Initial SPH particle spacing d0 in raw coordinate units	SPH 初始粒子间距 d0，单位为原始坐标单位
+Physical micrometers represented by one raw coordinate unit	一个原始坐标单位代表的物理长度，单位 μm
+Full y width in raw units; required for bin1d	完整 Y 向宽度，单位为原始坐标单位；bin1d 必填
+Full z width in raw units; required for 3D SPH	完整 Z 向宽度，单位为原始坐标单位；三维 SPH 必填
+Optional bin2d y-slice centers in raw units	bin2d 可选 Y 分片中心，单位为原始坐标单位
+Scalar or per-slice bin2d y widths in raw units	bin2d 的统一或逐分片 Y 宽度，单位为原始坐标单位
+Display coordinate multiplier; normally 10 for um	显示坐标乘数；坐标换算为 μm 时通常取 10
+Coordinate range after conversion [min max]	换算后的坐标范围 [最小值 最大值]
+Coordinate axis label	坐标轴名称
+Coordinate unit shown on plots	绘图中显示的坐标单位
+Fixed high-to-low so cumulative mass-x decreases with x	固定从大坐标向小坐标累积，使 mass-x 随 x 单调递减
+Field distribution	场分布
+Value histogram	数值直方图
+Mean profile in X direction	X 方向均值剖面
+Mean profile in Y direction	Y 方向均值剖面
+Particle-size count distribution	粒径计数分布
+Particle-size probability distribution	粒径概率分布
+Particle-size cumulative distribution	粒径累积分布
+Mean particle size by position	平均粒径位置分布
+Cumulative distribution	累积分布
+Differential distribution	微分分布
+Cumulative distribution (monotonic decreasing)	累计分布（保证单调递减）
+Local areal density (non-cumulative)	局部面密度（非累计）
+Pore phase distribution	孔隙相分布
+Pore connected components	孔隙连通组分
+Matrix connected components	基体连通组分
+Pore equivalent diameter	孔隙等效直径
+Matrix equivalent diameter	基体等效直径
+Porosity profile in X direction	X 方向孔隙率剖面
+Porosity profile in Y direction	Y 方向孔隙率剖面

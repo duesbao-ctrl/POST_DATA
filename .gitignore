@@ -1,5 +1,9 @@
 *.asv
 *.stepidx.mat
 matlab_probe.txt
-selftest_generated/selftest_output.txt
-selftest_generated/selftest_error.txt
+selftest_output.txt
+selftest_error.txt
+outputs/
+verification/
+*.tmp
+*.bak
